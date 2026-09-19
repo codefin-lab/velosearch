@@ -80,6 +80,16 @@ pub async fn put_repository(
             store.put_snapshot(&name, &snap, record);
         }
     }
+    // A repository every node cannot reach is not a repository: the snapshot
+    // taken into it succeeds, because each node truthfully writes what it
+    // holds where it can see, and the restore is the first thing to find out
+    // that the pieces were never in one place. So it is proved here, before
+    // the name is registered and anything is written under it.
+    if verify_asked(&p)
+        && let Err(why) = verify_shared(&name, &body).await
+    {
+        return repository_verification_failed(&name, &why);
+    }
     store.put_repository(&name, body);
     respond(&p, json!({"acknowledged": true}))
 }
@@ -138,20 +148,42 @@ pub async fn delete_repository(
     respond(&p, json!({"acknowledged": true}))
 }
 
-/// `POST /_snapshot/{repo}/_verify` -- a repository that is there works.
+/// `POST /_snapshot/{repo}/_verify` -- every node proves it reaches the same
+/// place, and the ones that did are the answer.
 pub async fn verify_repository(
     State(store): State<Store>,
     Path(name): Path<String>,
     Query(p): Query<Params>,
 ) -> Response {
-    if !store.repositories().contains_key(&name) {
+    let Some(repo) = store.repositories().get(&name).cloned() else {
         return err(
             StatusCode::NOT_FOUND,
             "repository_missing_exception",
             format!("[{name}] missing"),
         );
+    };
+    match verify_shared(&name, &repo).await {
+        Ok(nodes) => {
+            let nodes: serde_json::Map<String, Value> =
+                nodes.into_iter().map(|(id, node)| (id, json!({"name": node}))).collect();
+            respond(&p, json!({"nodes": nodes}))
+        }
+        Err(why) => repository_verification_failed(&name, &why),
     }
-    respond(&p, json!({"nodes": {"node-0": {"name": "velosearch"}}}))
+}
+
+/// A verification that did not hold, in the reference's shape: the
+/// registration or the check failed, and why is the cause underneath it.
+fn repository_verification_failed(name: &str, why: &str) -> Response {
+    let cause = json!({"type": "repository_verification_exception", "reason": why});
+    let error = json!({
+        "root_cause": [cause.clone()],
+        "type": "repository_verification_exception",
+        "reason": format!("[{name}] cannot be verified"),
+        "caused_by": cause,
+    });
+    (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": error, "status": 500})))
+        .into_response()
 }
 
 /// `POST /_snapshot/{repo}/_cleanup` -- nothing is left behind here, so there
@@ -361,6 +393,135 @@ fn bad_snapshot_lookup(repo: &str, names: &str) -> Option<Response> {
 
 /// The action a node is asked to write shards of a snapshot by.
 pub const SNAPSHOT_SHARDS: &str = "internal:cluster/snapshot/shards";
+pub const REPOSITORY_VERIFY: &str = "internal:cluster/repository/verify";
+
+/// Whether a repository has to be proved shared before it is registered.
+///
+/// The reference verifies on registration unless it is told not to, under the
+/// same name: `?verify=false`.
+fn verify_asked(p: &Params) -> bool {
+    !matches!(p.get("verify").map(|v| v.trim()), Some("false") | Some("0"))
+}
+
+/// Ask every node to leave a blob in the repository, then read them all back
+/// from here.
+///
+/// Each node writes `tests-<token>/<node id>.dat` holding the token, and this
+/// node reads every one of them out of its own view of the repository. A node
+/// that cannot reach the repository at all says so; a node whose blob cannot
+/// be read back from here reached a different place, which is the case that
+/// was passing silently. The directory is thrown away afterwards either way.
+///
+/// A repository read over a URL is one nothing writes to, and reaching it is
+/// the whole of what can be checked, so no blob is written or looked for.
+async fn verify_shared(name: &str, repo: &Value) -> Result<Vec<(String, String)>, String> {
+    let Some(here) = crate::snapshot::Source::of(repo) else {
+        return Err(format!(
+            "[{name}] is not a repository this node can reach: its location is not under this \
+             node's path.repo"
+        ));
+    };
+    let state = crate::cluster::current_state();
+    let me = crate::cluster::runtime().map(|rt| rt.local());
+    let mut nodes: Vec<(crate::cluster::NodeId, String)> =
+        state.nodes.iter().map(|(id, n)| (id.clone(), n.name.clone())).collect();
+    // a node that is the whole of its cluster is still asked: a path.repo it
+    // cannot write to is worth hearing about now rather than at the restore
+    if nodes.is_empty() {
+        let me = crate::cluster::identity();
+        nodes.push((me.id.clone(), me.name.clone()));
+    }
+    let token = crate::cluster::NodeId::random().as_str().to_string();
+    let dir = format!("tests-{token}");
+    let outcome = verify_round(&here, repo, &dir, &token, &nodes, me.as_ref()).await;
+    off_the_runtime(|| here.remove_prefix(&dir));
+    outcome
+}
+
+/// One round of the above: every node writes, then this one reads.
+async fn verify_round(
+    here: &crate::snapshot::Source,
+    repo: &Value,
+    dir: &str,
+    token: &str,
+    nodes: &[(crate::cluster::NodeId, String)],
+    me: Option<&crate::cluster::NodeId>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut waits = Vec::new();
+    for (id, _) in nodes {
+        if Some(id) == me {
+            continue;
+        }
+        let Some(rt) = crate::cluster::runtime() else { continue };
+        let id = id.clone();
+        let body = json!({"repository": repo, "dir": dir, "token": token});
+        waits.push(tokio::spawn(async move {
+            let answer = rt
+                .call(
+                    &id,
+                    REPOSITORY_VERIFY,
+                    body.to_string().into_bytes(),
+                    std::time::Duration::from_secs(30),
+                )
+                .await;
+            let wrote = match answer {
+                None => Err("did not answer".to_string()),
+                Some(e) if e.kind == crate::cluster::transport::Kind::Error => {
+                    Err(String::from_utf8_lossy(&e.body).into_owned())
+                }
+                Some(_) => Ok(()),
+            };
+            (id, wrote)
+        }));
+    }
+    // this node's own blob, written the way every other node writes its own
+    let mine = me.map(|id| id.as_str().to_string()).unwrap_or_else(|| {
+        nodes.first().map(|(id, _)| id.as_str().to_string()).unwrap_or_default()
+    });
+    let wrote_mine = off_the_runtime(|| write_verify_blob(here, dir, token, &mine));
+    let mut failure = wrote_mine.err();
+    for w in waits {
+        if let Ok((id, Err(why))) = w.await {
+            failure.get_or_insert(format!("node [{}] {why}", id.as_str()));
+        }
+    }
+    if let Some(why) = failure {
+        return Err(why);
+    }
+    let seen: Vec<(String, String)> =
+        nodes.iter().map(|(id, n)| (id.as_str().to_string(), n.clone())).collect();
+    if !here.writable() {
+        return Ok(seen);
+    }
+    // the half that catches a location which resolved somewhere else: what
+    // the other nodes wrote, read through this node's own view
+    for (id, _) in nodes {
+        let blob = format!("{dir}/{}.dat", id.as_str());
+        let read = off_the_runtime(|| here.read(&blob));
+        if read.as_deref() != Some(token.as_bytes()) {
+            return Err(format!(
+                "node [{}] left its mark in the repository and this node cannot read it back: \
+                 the repository is not one place every node of the cluster reaches",
+                id.as_str()
+            ));
+        }
+    }
+    Ok(seen)
+}
+
+/// A node's own blob, or why it could not leave one.
+fn write_verify_blob(
+    to: &crate::snapshot::Source,
+    dir: &str,
+    token: &str,
+    node: &str,
+) -> Result<(), String> {
+    if !to.writable() {
+        return Ok(());
+    }
+    to.write(&format!("{dir}/{node}.dat"), token.as_bytes())
+        .map_err(|e| format!("could not write into the repository: {e}"))
+}
 
 /// The committed state of a cluster this node is one of several nodes in;
 /// `None` for a node that is the whole of its cluster, whose own store is
@@ -490,6 +651,44 @@ pub fn snapshot_install(store: Store) {
     use crate::cluster::transport::Envelope;
     let Some(rt) = crate::cluster::runtime() else { return };
     let me = rt.local();
+    {
+        // the node's side of a verification: reach the repository, leave the
+        // mark it was asked for, and say so. Whether the mark can be read
+        // from anywhere else is not this node's question.
+        let me = me.clone();
+        rt.register(
+            REPOSITORY_VERIFY,
+            std::sync::Arc::new(move |e: Envelope| -> DataFuture {
+                let me = me.clone();
+                Box::pin(async move {
+                    let state = crate::cluster::current_state();
+                    if e.from != me && !state.nodes.contains_key(&e.from) {
+                        return e.error(me, "not a node of this cluster");
+                    }
+                    let v: Value = serde_json::from_slice(&e.body).unwrap_or(Value::Null);
+                    let Some(to) = crate::snapshot::Source::of(&v["repository"]) else {
+                        return e.error(
+                            me,
+                            "cannot reach the repository: its location is not under this node's \
+                             path.repo",
+                        );
+                    };
+                    let dir = v["dir"].as_str().unwrap_or("").to_string();
+                    let token = v["token"].as_str().unwrap_or("").to_string();
+                    let node = me.as_str().to_string();
+                    let wrote = tokio::task::spawn_blocking(move || {
+                        write_verify_blob(&to, &dir, &token, &node)
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(format!("the verification panicked: {e}")));
+                    match wrote {
+                        Ok(()) => e.response(me, b"{}".to_vec()),
+                        Err(why) => e.error(me, &why),
+                    }
+                })
+            }),
+        );
+    }
     rt.register(
         SNAPSHOT_SHARDS,
         std::sync::Arc::new(move |e: Envelope| -> DataFuture {
