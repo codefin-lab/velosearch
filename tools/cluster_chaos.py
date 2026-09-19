@@ -20,6 +20,16 @@ against last-minute, so a leak shows as a slope.
   cluster_chaos.py --mode chaos   --seconds 90
   cluster_chaos.py --mode rolling --rounds 2
   cluster_chaos.py --mode soak    --seconds 900
+
+A rolling restart that puts a different build on each node as it comes back
+is a rolling upgrade, which is the shape a deployment actually meets and the
+one nothing here had ever run: every check until now was three nodes of one
+build. `--to-binary` restarts each node onto that build in turn, and
+`--and-back` then walks them back to the one they started on, which is the
+rollback. Each node is asked what it was built from at every step, so the log
+shows the cluster really was of two minds and for how long.
+
+  cluster_chaos.py --mode rolling --to-binary /tmp/next/velosearch --and-back
 """
 import argparse, json, os, random, shutil, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 
@@ -297,12 +307,57 @@ def seq_span(nodes, holders, index):
     return "; ".join(out)
 
 
+
+def build_of(node):
+    """What a node says it was built from, or "?" when it will not say."""
+    try:
+        _, body = call(f"http://{node.http}/", timeout=5)
+        return (body.get("version") or {}).get("build_hash", "?")
+    except Exception:
+        return "?"
+
+
+def walk_builds(nodes, a, frm, to, what, note, fault):
+    """Put `to` on every node in turn, waiting for green between each.
+
+    The point is the middle of it: for as long as this takes, the cluster is
+    of two builds at once, taking writes and answering reads. A deployment
+    does this every time it ships, and nothing here had ever run it -- every
+    check was three nodes of one build, which is the one arrangement a
+    production cluster is never in while it is being changed.
+    """
+    note(f"{what}: {frm} -> {to}")
+    for i, v in enumerate(nodes):
+        v.binary = to
+        fault("restart", i)
+        g = wait_green(nodes, a.index, 180)
+        mix = ", ".join(f"{x.name}={build_of(x)[:12]}" for x in nodes)
+        note(
+            f"{what}: {v.name} is back, green "
+            f"{'after %.1fs' % g if g is not None else 'NOT within 180s'}; cluster is [{mix}]"
+        )
+        if g is None:
+            print(f"  the cluster did not go green during the {what}; stopping there")
+            break
+        time.sleep(3)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--binary", default="./target/release/velosearch")
     ap.add_argument("--mode", choices=["chaos", "rolling", "soak"], default="chaos")
     ap.add_argument("--seconds", type=int, default=90)
     ap.add_argument("--rounds", type=int, default=2, help="rolling: how many times round the nodes")
+    ap.add_argument(
+        "--to-binary",
+        default="",
+        help="rolling: the build each node comes back on, one at a time -- an upgrade",
+    )
+    ap.add_argument(
+        "--and-back",
+        action="store_true",
+        help="rolling: after the upgrade, walk every node back to the build it started on",
+    )
     ap.add_argument("--faults", default="partition,stop,kill,restart", help="chaos and soak: kinds to mix")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--index", default="chaos")
@@ -405,13 +460,18 @@ def main():
             note(f"{v.name} back")
 
     if a.mode == "rolling":
-        for r in range(a.rounds):
-            for i in range(3):
-                t = time.monotonic()
-                fault("restart", i)
-                g = wait_green(nodes, a.index, 120)
-                note(f"green {'after %.1fs' % g if g is not None else 'NOT within 120s'} ({nodes[i].name}, round {r + 1})")
-                time.sleep(3)
+        if a.to_binary:
+            was = nodes[0].binary
+            walk_builds(nodes, a, was, a.to_binary, "upgrade", note, fault)
+            if a.and_back:
+                walk_builds(nodes, a, a.to_binary, was, "rollback", note, fault)
+        else:
+            for r in range(a.rounds):
+                for i in range(3):
+                    fault("restart", i)
+                    g = wait_green(nodes, a.index, 120)
+                    note(f"green {'after %.1fs' % g if g is not None else 'NOT within 120s'} ({nodes[i].name}, round {r + 1})")
+                    time.sleep(3)
     else:
         kinds = [k for k in a.faults.split(",") if k and k != "none"]
         last_sample = 0
