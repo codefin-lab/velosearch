@@ -502,6 +502,44 @@ def reset(base):
         pass
 
 
+
+def check_build(url, binary):
+    """Refuse to count a node's answers until it says which build it is.
+
+    A node left over from another session, holding the port the one just
+    started could not bind, answers everything perfectly well -- for a
+    different binary. Whole gates were run against one and the numbers went
+    into the ledger, so the node is asked what it was built from and the
+    answer is compared with the binary these numbers are meant to be about.
+    """
+    path = pathlib.Path(binary)
+    if not path.exists():
+        print(f"  note: {binary} is not here, so nothing checked which build {url} is")
+        return
+    try:
+        mine = subprocess.run(
+            [str(path), "--build-hash"], capture_output=True, text=True, timeout=30
+        ).stdout.strip()
+    except Exception as e:
+        print(f"  note: {binary} could not be asked for its build hash ({e})")
+        return
+    try:
+        theirs = SESSION.get(url, timeout=10).json()["version"]["build_hash"]
+    except Exception as e:
+        print(f"  note: {url} could not be asked for its build hash ({e})")
+        return
+    if not mine or mine == "unknown" or theirs == "unknown":
+        print(f"  note: a build without a hash, so nothing checked which build {url} is")
+        return
+    if mine != theirs:
+        print(f"the node at {url} is not the build these answers would be about:")
+        print(f"  {binary} was built from {mine}")
+        print(f"  {url} answers that it was built from {theirs}")
+        print("  something else is holding that port; nothing here would be a")
+        print("  verdict on this build, so nothing is counted. --any-build overrides.")
+        sys.exit(2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:9200")
@@ -510,6 +548,17 @@ def main():
     ap.add_argument("--json-out", default="")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--show", type=int, default=15, help="how many failures to print")
+    ap.add_argument(
+        "--binary",
+        default="target/release/velosearch",
+        help="the build these answers are meant to be about; the node is asked "
+        "whether it is that build before anything is counted",
+    )
+    ap.add_argument(
+        "--any-build",
+        action="store_true",
+        help="count whatever answers, without asking which build it is",
+    )
     ap.add_argument(
         "--before",
         default="",
@@ -539,6 +588,8 @@ def main():
     if last is not None:
         print(f"cannot reach server at {args.url}: {last}")
         sys.exit(2)
+    if not args.any_build:
+        check_build(args.url, args.binary)
 
     total = passed = failed = skipped = 0
     failures = []
@@ -586,11 +637,29 @@ def main():
                 # the script runs before every section: one that hangs used
                 # to hang the run, with no output and nothing to read
                 try:
-                    subprocess.run(
-                        [sys.executable, args.before], check=False, timeout=300
+                    done = subprocess.run(
+                        [sys.executable, args.before],
+                        check=False,
+                        timeout=300,
+                        capture_output=True,
+                        text=True,
                     )
                 except subprocess.TimeoutExpired:
                     print(f"the --before script {args.before} did not finish; giving up")
+                    sys.exit(2)
+                # A setup that did not happen is not a suite that failed. The
+                # fixture says exactly what is wrong -- a port held by
+                # somebody else's server, a directory it cannot write -- and
+                # that used to be swallowed while the sections it was setting
+                # up were counted as failures of this server.
+                if done.returncode != 0:
+                    print(
+                        f"the --before script {args.before} failed "
+                        f"({done.returncode}); the suite it sets up cannot be "
+                        f"run, so nothing here is a verdict on the server:"
+                    )
+                    for line in (done.stderr or done.stdout or "").splitlines():
+                        print(f"  {line}")
                     sys.exit(2)
             r = Runner(args.url, specs, args.verbose)
             try:

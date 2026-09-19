@@ -40,7 +40,7 @@ async fn root() -> impl IntoResponse {
             "distribution": "velosearch",
             "number": "3.9.0",
             "build_type": "tar",
-            "build_hash": "unknown",
+            "build_hash": build_hash(),
             "build_date": "2026-01-01T00:00:00.000000Z",
             "build_snapshot": false,
             "lucene_version": "VeloCore-0.26",
@@ -760,9 +760,41 @@ fn max_content_bytes() -> usize {
         * 1024
 }
 
+/// The commit this binary was built from, compiled in by `build.rs`.
+///
+/// A gate that asks a node for this and compares it with the binary it meant
+/// to start can tell that it is counting the right build's answers; without
+/// it, a node left over from another session on the same port is
+/// indistinguishable from the one just started.
+pub fn build_hash() -> &'static str {
+    env!("VELOSEARCH_BUILD_HASH")
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_max_level(tracing::Level::WARN).init();
+    // asked what it is rather than asked to be a node: a gate compares this
+    // with what a running node reports, and an argument that is not
+    // understood is said so rather than quietly starting a server
+    if let Some(arg) = std::env::args().nth(1) {
+        match arg.as_str() {
+            "--build-hash" => {
+                println!("{}", build_hash());
+                return Ok(());
+            }
+            "--version" | "-V" => {
+                println!("velosearch 3.9.0 ({})", build_hash());
+                return Ok(());
+            }
+            other => {
+                eprintln!(
+                    "velosearch: [{other}] is not an option this takes; it is configured through \
+                     the VELOSEARCH_* environment"
+                );
+                std::process::exit(2);
+            }
+        }
+    }
     // the node's uptime counts from here
     api::sysinfo::uptime_millis();
     let addr = std::env::var("VELOSEARCH_ADDR").unwrap_or_else(|_| "127.0.0.1:9200".into());

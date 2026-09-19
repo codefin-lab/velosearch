@@ -22,6 +22,21 @@
 #     VELO_ROLES=data,cluster_manager,remote_cluster_client tools/gate_node.sh
 set -e
 PORT=${VELO_PORT:-9213}
+TRANSPORT_PORT=${VELO_TRANSPORT:-$((PORT + 100))}
+# A node left over from another session holding this port used to be
+# indistinguishable from the one this script starts: `exec` failed with
+# "address already in use", the script died where nothing was reading its
+# output, and the gate that followed counted a stranger's answers. Whoever is
+# there is named, and this stops.
+for p in "$PORT" "$TRANSPORT_PORT"; do
+  holder=$(lsof -nP -iTCP:"$p" -sTCP:LISTEN -t 2>/dev/null | head -1)
+  if [ -n "$holder" ]; then
+    echo "gate_node.sh: port $p is already held by pid $holder:" >&2
+    ps -o lstart=,command= -p "$holder" >&2 2>/dev/null || true
+    echo "gate_node.sh: refusing to start; kill that process or set VELO_PORT" >&2
+    exit 2
+  fi
+done
 # The geoip databases, the Beider-Morse rule files and the Ukrainian
 # dictionary are somebody else's data and are not in this repository
 # (docs/geoip.md, docs/phonetic.md, docs/ukrainian.md). They used
@@ -39,7 +54,7 @@ mkdir -p "$DATA/config/ingest-user-agent"
 cp study/OpenSearch/modules/ingest-user-agent/src/test/test-regexes.yml \
    "$DATA/config/ingest-user-agent/" 2>/dev/null || true
 VELOSEARCH_ADDR=127.0.0.1:$PORT \
-VELOSEARCH_TRANSPORT_PORT=${VELO_TRANSPORT:-$((PORT + 100))} \
+VELOSEARCH_TRANSPORT_PORT=$TRANSPORT_PORT \
 VELOSEARCH_DATA="$DATA" \
 VELOSEARCH_NODE_ATTRS=testattr=test \
 VELOSEARCH_GEOIP_PATH=${VELO_GEOIP:-$FIXTURES/geoip-db} \
