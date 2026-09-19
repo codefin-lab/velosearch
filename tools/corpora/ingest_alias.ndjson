@@ -90,6 +90,12 @@
 {"method": "GET", "path": "/_component_template/r17-ct", "body": null}
 {"method": "DELETE", "path": "/_component_template/r17-ct", "body": null}
 {"method": "PUT", "path": "/_index_template/r17-t3", "body": {"index_patterns": ["r17-tpl*"], "priority": 10}}
+{"method": "POST", "path": "/_ingest/pipeline/_simulate", "body": {"pipeline": {"processors": [{"rename": {"field": "nope", "target_field": "x"}}]}, "docs": [{"_source": {"a": 1}}]}}
+{"method": "POST", "path": "/_ingest/pipeline/_simulate?verbose=true", "body": {"pipeline": {"processors": [{"rename": {"field": "nope", "target_field": "x", "tag": "r17t"}}]}, "docs": [{"_source": {"a": 1}}]}}
+{"method": "POST", "path": "/_ingest/pipeline/_simulate", "body": {"pipeline": {"processors": [{"split": {"field": "a", "separator": ","}}]}, "docs": [{"_source": {"a": 1}}]}}
+{"method": "POST", "path": "/_ingest/pipeline/_simulate", "body": {"pipeline": {"processors": [{"join": {"field": "a", "separator": ","}}]}, "docs": [{"_source": {"a": 1}}]}}
+{"method": "POST", "path": "/_ingest/pipeline/_simulate", "body": {"pipeline": {"processors": [{"rename": {"field": "nope", "target_field": "x", "tag": "r17f", "on_failure": [{"set": {"field": "err", "value": "{{_ingest.on_failure_processor_type}}/{{_ingest.on_failure_processor_tag}}"}}]}}]}, "docs": [{"_source": {"a": 1}}]}}
+{"method": "PUT", "path": "/_ingest/pipeline/r17-p3", "body": {"processors": [{"split": {"separator": ","}}]}}
 {"method": "DELETE", "path": "/r17*", "body": null}
 {"method": "DELETE", "path": "/_index_template/r17-*", "body": null}
 {"method": "DELETE", "path": "/_component_template/r17-*", "body": null}
