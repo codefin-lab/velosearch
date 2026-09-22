@@ -94,6 +94,43 @@ are not claimed to be.
 | `VELOSEARCH_WRITER_IDLE_SECS` | how long a writer with nothing to do is kept before its memory is given back. |
 | `VELOSEARCH_ISM_INTERVAL_MS` | how often index management looks at what it manages. Default is a job's own schedule. |
 
+## What it refuses to spend
+
+A node that accepts everything it is given answers all of it slowly and then
+dies; these are the three ceilings it is held to instead. What each refusal
+looks like, and how each is checked, is in [docs/limits.md](limits.md).
+
+The breakers are cluster settings, spelled as OpenSearch spells them, and a
+limit is either a size (`4gb`) or a share of the machine (`60%`). A request
+past one is answered `429 circuit_breaking_exception`, with the bytes it asked
+for and the bytes it was allowed.
+
+| | |
+|---|---|
+| `indices.breaker.request.limit` | what the aggregations of the searches running at once may build between them. Default `60%`. |
+| `indices.breaker.request.per_search` | ours: the share of that one aggregating search is given. Default is the limit divided by how many searches the node runs at once, so the searches running together cannot pass the limit. |
+| `network.breaker.inflight_requests.limit` | the bodies being read at this moment, all of them together. Default `100%`, counted with the reference's overhead of 2. |
+| `indices.breaker.total.limit` | everything the node holds, the allocator included. Default `95%`. A search already running reads this as it walks, and gives up rather than taking the node down. |
+| `indices.breaker.total.use_real_memory` | whether that reading is the memory the process actually holds, rather than only what was reserved. Default `true`. |
+| `indices.breaker.fielddata.limit` | reported, and empty: there is no fielddata cache in this engine. |
+
+The pools are node settings, because how much a node runs at once is a
+property of the machine it is on. A request past a full pool with a full queue
+is answered `429 rejected_execution_exception`, which is what a client's
+back-off reads.
+
+| | |
+|---|---|
+| `VELOSEARCH_THREAD_POOL_<pool>_SIZE` | how many requests of that kind the node runs at once — `SEARCH`, `WRITE`, `GET`, `ANALYZE` and the other fixed pools. Default is twice the thread count OpenSearch gives the pool, because a request here gives its worker up whenever it waits for a disk or another node. `0` or less means no ceiling. |
+| `VELOSEARCH_THREAD_POOL_<pool>_QUEUE_SIZE` | how many may wait for a turn. Default is the reference's queue for that pool (1,000 for `search`, 10,000 for `write`). `0` refuses rather than waits; `-1` is a queue with no end. |
+| `VELOSEARCH_THREAD_POOL_ADMISSION` | `off` takes every ceiling away, for a run that wants the node to attempt whatever it is given. |
+
+The clock is a cluster setting, and a request may name its own.
+
+| | |
+|---|---|
+| `search.default_search_timeout` | the deadline for a search that names none. Default `-1`, which is no deadline. A request's own `timeout` — in the body or in the query string — stands over it. A search that reaches its deadline answers `"timed_out": true` with what it had collected, which is what OpenSearch answers. |
+
 ## Asynchronous search
 
 Cluster settings, changed with `PUT _cluster/settings`. The first is the

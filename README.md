@@ -43,6 +43,7 @@ rather than believed.
 | the built image's own healthcheck | **9 checks** over four containers, Docker running the HEALTHCHECK and the verdict read from `docker inspect`: security off, authentication on, TLS on, and one of a cluster with no cluster manager | `tools/docker_health_check.py` |
 | the security surface, against OpenSearch's own | **40 questions** asked of both engines as an administrator and as a filtered user -- what the filter hides, what the caller may not reach, and what the security API answers to a role, user or mapping that is wrong | `tools/security_replay.py` |
 | a TLS deployment, verified rather than waved through | **13 checks**: the chain and the hostname checked against a pinned CA, plain http refused on the TLS port, no credentials and wrong passwords refused, a user held to the one role it was given | `tools/tls_auth_check.py` |
+| what a node refuses to spend | **33 checks** over three ceilings: the memory a request may take, how many the node runs at once, and how long one may walk -- each put in the state and the refusal read ([docs/limits.md](docs/limits.md)) | `tools/limits_check.py` |
 | malformed input at everything that parses | **2,000 probes**, node still answering | `tools/fuzz_check.py` |
 | OpenSearch Dashboards' own API suite, against the console's server | **146 of 166**, none failed that the Node server passes (it scores 140) | `tools/dashboards_gate.py` |
 | three nodes, faults, and every acknowledged write | **200 runs of 200 clean**: ninety seconds each of isolations, SIGTERM restarts, SIGSTOP pauses and heals under a write load, then every acknowledged document checked on every copy -- none lost, none behind, the copies agreeing | `tools/cluster_chaos.py` |
@@ -287,7 +288,8 @@ passes and adds them up.
 | [docs/polish.md](docs/polish.md) | Polish, and the stemmer table this one does ship |
 | [docs/performance.md](docs/performance.md) | both engines measured on the same machine, and what to read into it |
 | [docs/velocore.md](docs/velocore.md) | what was changed in the fork of tantivy, and why |
-| [docs/adr/](docs/adr/) | the eight decisions that were hard to reverse |
+| [docs/limits.md](docs/limits.md) | what a node refuses to spend: its memory, its concurrency and its time |
+| [docs/adr/](docs/adr/) | the nine decisions that were hard to reverse |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | where things are, and what to run before you push |
 | [CONTEXT.md](CONTEXT.md) | what the words mean |
 
