@@ -7,6 +7,7 @@
 pub mod analysis;
 pub mod api;
 pub mod blockstats;
+pub mod breaker;
 pub mod cluster;
 pub mod console;
 pub mod hdr;
