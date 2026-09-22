@@ -95,6 +95,14 @@ jobs:
       - name: Malformed input at everything that parses
         run: python3 tools/fuzz_check.py --rounds 2000
 
+      # The three ceilings a node has to have before it can be left alone with
+      # real traffic: the memory its requests may take, how many of them it
+      # runs at once, and how long one of them may walk. Each was reported
+      # before it was enforced, so each is checked by putting a node in the
+      # state and reading what it answers.
+      - name: The memory, the concurrency and the time a request may take
+        run: python3 tools/limits_check.py
+
       # A write is answered once it is recorded and reaches the index at the
       # next commit; what a node does with that record when it starts again is
       # the whole of its durability, and no suite ever restarts a node.

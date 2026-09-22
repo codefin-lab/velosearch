@@ -34,6 +34,9 @@ by a script in `tools/`, and [README.md](README.md) says which.
   once ids and timings are scrubbed (`tools/compat_audit.py replay`)
 - **167 of 167** REST APIs routed on every path and method their spec names
   (`tools/endpoint_gate.py`)
+- **33 of 33** checks of the three ceilings a node is held to -- the memory a
+  request may take, how many requests it runs at once, and how long one may
+  walk (`tools/limits_check.py`, [docs/limits.md](docs/limits.md))
 - **quicker or lighter on all 34 dimensions**, measured beside OpenSearch 3.1.0
   on the same Google Compute Engine `n2-standard-8`, with the same corpus and
   the same client ([docs/performance.md](docs/performance.md))
@@ -75,3 +78,15 @@ Dashboards' browser application. Recently added:
   metadata; the dangling-index, remote-store and stored-task-result endpoints,
   each answering as a node without the feature answers
 - `_nodes` and `_cluster/stats` narrowed to the nodes and metrics a path names
+- circuit breakers that refuse rather than only report: an aggregating search
+  is given a budget out of `indices.breaker.request.limit` and held to it, a
+  body is counted against the in-flight breaker, and the parent breaker reads
+  the memory the process actually holds -- consulted before a request is
+  admitted and again by a search already walking
+- bounded thread pools: each runs so many requests at once, queues what it
+  can, and answers `429 rejected_execution_exception` when the queue is full,
+  so a node under more load than it can carry refuses some of it quickly
+  rather than accepting all of it slowly
+- `timeout` on a search, enforced: the walk reads the deadline as it goes and
+  answers with what it had, `"timed_out": true`, and
+  `search.default_search_timeout` sets one for the searches that ask for none
