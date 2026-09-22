@@ -740,6 +740,7 @@ pub(crate) fn shorten_scores(v: &mut Value) {
 /// `rest_total_hits_as_int` compatibility switch.
 pub(crate) fn envelope(out: Outcome, body: &Value, p: &Params) -> Value {
     let out_shards = out.shards;
+    let out_timed_out = out.timed_out;
     let out_failures = out.failures.clone();
     let out_skipped = out.skipped;
     let out_took = out.took_ms;
@@ -785,7 +786,7 @@ pub(crate) fn envelope(out: Outcome, body: &Value, p: &Params) -> Value {
 
     let mut resp = json!({
         "took": out_took,
-        "timed_out": false,
+        "timed_out": out_timed_out,
         "_shards": {
             "total": out_shards,
             "successful": out_shards.saturating_sub(out_failures.len() as u64),

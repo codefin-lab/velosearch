@@ -1404,6 +1404,12 @@ pub fn run(
     let OutputSpecs { source: source_sel, fields: field_specs, stored } =
         output_specs(store, &targets, body, p)?;
 
+    // What this search may spend: the deadline it asked for, and -- where it
+    // aggregates -- a share of the `request` breaker, held until its answer
+    // is written. A node with no share left refuses here, rather than
+    // accepting a search it cannot afford and finding out while it runs.
+    let budget = Budget::of_search(store, body, p, agg_json.is_some() || !filters_aggs.is_empty())?;
+
     let started = std::time::Instant::now();
     // a slice divides the index between readers, so the page it can offer is
     // cut from every matching document rather than from the first few
@@ -1532,6 +1538,7 @@ pub fn run(
                     page_want,
                     fanned_out,
                     &views,
+                    &budget,
                 )
             };
             match &alias_filters {
@@ -1585,6 +1592,13 @@ pub fn run(
         }
         searchers.push((o.name, o.searcher, o.st));
     }
+    // A walk that stopped because the node ran out of memory has an answer
+    // that is missing documents nobody asked it to leave out. That is a
+    // refusal, not a page: the caller is told which breaker stopped it.
+    if let Some(refusal) = budget.broken() {
+        return Err(refusal);
+    }
+
     // the query phase ends here; what follows reads the page back
     let fetch_started = std::time::Instant::now();
 
@@ -2098,6 +2112,7 @@ pub fn run(
             suggest,
             failures,
             filtered: dls_applied,
+            timed_out: budget.timed_out(),
             native: Some(NativeParts {
                 agg_acc: agg_bytes,
                 agg_req: agg_req_json,
@@ -2115,6 +2130,8 @@ pub fn run(
         p,
         Finish {
             started,
+            budget,
+            timed_out: false,
             page,
             total,
             max_score,
@@ -2148,6 +2165,11 @@ pub fn run(
 /// numbers, and the aggregations still intermediate.
 pub(crate) struct Finish {
     pub(crate) started: std::time::Instant,
+    /// what the search was given to spend, held until its answer is written
+    pub(crate) budget: Budget,
+    /// a node that answered this coordinator ran out of time; the answer says
+    /// so however this node's own clock went
+    pub(crate) timed_out: bool,
     pub(crate) page: Vec<Value>,
     pub(crate) total: u64,
     pub(crate) max_score: Option<f32>,
@@ -2188,6 +2210,8 @@ pub(crate) fn finish_search(
     let fetch_started = std::time::Instant::now();
     let Finish {
         started,
+        budget,
+        timed_out,
         page,
         total,
         max_score,
@@ -2445,6 +2469,7 @@ pub(crate) fn finish_search(
         suggest,
         failures,
         filtered: dls_applied,
+        timed_out: timed_out || budget.timed_out(),
         native: None,
     })
 }

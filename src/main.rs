@@ -10,7 +10,7 @@
 // would compile every one of them a second time -- once as the library and
 // once inside this binary -- which doubles the build and reports as dead
 // everything the server does not itself reach.
-use velosearch::{api, cluster, http_compat, ism, security, store, tls};
+use velosearch::{api, breaker, cluster, http_compat, ism, security, store, tls};
 
 use axum::Router;
 
@@ -743,7 +743,10 @@ fn app(store: Store) -> Router {
     Router::new()
         .fallback_service(routes)
         .layer(axum::middleware::from_fn_with_state(store.clone(), cluster::forward::layer))
-        .layer(axum::middleware::from_fn_with_state(store, security::layer::authenticate))
+        .layer(axum::middleware::from_fn_with_state(store.clone(), security::layer::authenticate))
+        // what the node may hold, asked before the body is read into it and
+        // before a handler builds anything out of it
+        .layer(axum::middleware::from_fn_with_state(store, breaker::layer))
         // outermost, so a request refused before it reaches a handler is
         // still one its pool counts
         .layer(axum::middleware::from_fn(api::pools::track))

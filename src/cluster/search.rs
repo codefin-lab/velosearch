@@ -614,6 +614,7 @@ pub fn run_spanning(
     let mut profiles: Vec<Value> = Vec::new();
     let mut took = 0u64;
     let mut filtered = false;
+    let mut timed_out = false;
     let mut failed_shards = 0u64;
     let allow_partial = p.get("allow_partial_search_results").map(|v| v != "false").unwrap_or(true);
     for (order, (node, reply)) in replies.into_iter().enumerate() {
@@ -636,6 +637,7 @@ pub fn run_spanning(
                 failures.extend(o.failures);
                 took = took.max(o.took_ms);
                 filtered |= o.filtered;
+                timed_out |= o.timed_out;
                 if let Some(pr) = o
                     .profile
                     .and_then(|v| v.get("shards").cloned())
@@ -739,6 +741,10 @@ pub fn run_spanning(
         p,
         crate::search::Finish {
             started,
+            // the coordinator holds no budget of its own: what it merges was
+            // already collected under each node's
+            budget: crate::search::Budget::unbounded(),
+            timed_out,
             page,
             total,
             max_score,
