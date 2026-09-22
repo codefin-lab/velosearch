@@ -126,7 +126,11 @@ pub async fn stats(Query(p): Query<Params>, uri: Uri) -> Response {
     let counted = counters(want.as_deref());
     // the cluster's version travels with the whole answer and not with one
     // stat, which is how the plugin answers it
-    let info = if want.is_some() { json!({}) } else { json!({"cluster_version": "3.9.0"}) };
+    let info = if want.is_some() {
+        json!({})
+    } else {
+        json!({"cluster_version": crate::OPENSEARCH_VERSION})
+    };
     respond(
         &p,
         json!({

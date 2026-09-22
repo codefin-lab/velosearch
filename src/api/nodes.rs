@@ -204,6 +204,22 @@ fn nodes_path_parts(path: &str) -> Vec<String> {
     rest.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
 }
 
+/// One node's statistics, for a caller inside the server rather than one on
+/// the network -- the Prometheus exporter, which renders what this answers
+/// rather than working the numbers out a second time.
+pub(crate) fn nodes_stats_of(
+    store: &Store,
+    p: &Params,
+    nodes: &[String],
+    metrics: Option<&String>,
+    index_metric: Option<&String>,
+    level: &str,
+) -> Response {
+    let mut p = p.clone();
+    p.insert("level".to_string(), level.to_string());
+    nodes_stats(store, &p, nodes, metrics, index_metric)
+}
+
 /// `_nodes/stats` -- what each node has been doing.
 fn nodes_stats(
     store: &Store,
@@ -844,8 +860,8 @@ fn plugins() -> Value {
             .map(|name| {
                 json!({
                     "name": name,
-                    "version": "3.9.0",
-                    "opensearch_version": "3.9.0",
+                    "version": crate::OPENSEARCH_VERSION,
+                    "opensearch_version": crate::OPENSEARCH_VERSION,
                     "java_version": "11",
                     "description": format!("the {name} plugin"),
                     "classname": "",
@@ -885,8 +901,8 @@ fn modules() -> Value {
             .map(|name| {
                 json!({
                     "name": name,
-                    "version": "3.9.0",
-                    "opensearch_version": "3.9.0",
+                    "version": crate::OPENSEARCH_VERSION,
+                    "opensearch_version": crate::OPENSEARCH_VERSION,
                     "java_version": "11",
                     "description": format!("the {name} module"),
                     "classname": "",
@@ -947,7 +963,7 @@ fn nodes_info(p: &Params, nodes: &[String], metrics: Option<&String>) -> Respons
             let Some((name, mut rest)) = other_node_identity(id) else { continue };
             if let Some(o) = rest.as_object_mut() {
                 o.insert("name".into(), name);
-                o.insert("version".into(), json!("3.9.0"));
+                o.insert("version".into(), json!(crate::OPENSEARCH_VERSION));
                 o.insert("build_type".into(), json!("tar"));
                 o.insert("build_hash".into(), json!("velosearch"));
             }
@@ -957,7 +973,7 @@ fn nodes_info(p: &Params, nodes: &[String], metrics: Option<&String>) -> Respons
         }
         let mut local = json!({
             "name": me.name, "transport_address": me.transport_address,
-            "host": me.host, "ip": me.host, "version": "3.9.0",
+            "host": me.host, "ip": me.host, "version": crate::OPENSEARCH_VERSION,
             "build_type": "tar", "build_hash": "velosearch", "roles": me.roles,
             "attributes": me.attributes,
             "os": {"refresh_interval_in_millis": 1000,

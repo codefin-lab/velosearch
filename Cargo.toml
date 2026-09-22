@@ -36,7 +36,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 parking_lot = "0.12"
 regex = "1"
 sha1 = "0.10"
@@ -46,7 +46,6 @@ serde_yaml = "0.9"
 bcrypt = "0.15"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-rustls-pemfile = "2"
 rcgen = "0.13"
 x509-parser = "0.16"
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "service"] }

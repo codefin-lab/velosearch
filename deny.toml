@@ -1,0 +1,77 @@
+# What this project will take from the crates it depends on.
+#
+# A build that pulls three hundred crates is a build that trusts three hundred
+# crates, and nothing here was checking any of it: not whether one of them has
+# a published advisory, not what licence it carries, and not where it came
+# from. The checks in CI (`cargo deny check`) read this file.
+#
+#   cargo deny check           everything below
+#   cargo deny check advisories  just the vulnerabilities
+#
+# A finding is a decision to make, not a wall: an advisory that does not apply
+# here is written down in `ignore` with the reason, so the next person reads
+# why rather than rediscovering it.
+
+[graph]
+# what the release builds and what the image builds
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+]
+all-features = true
+
+[advisories]
+# every advisory is a failure; one that does not apply is ignored here by id
+# with the reason beside it
+yanked = "deny"
+ignore = [
+    # The Marvin attack is a timing sidechannel in RSA *decryption*: an
+    # attacker who can have a private key operate on chosen ciphertexts and
+    # time it can recover the key. Nothing here decrypts with an RSA key --
+    # `rsa` is used in one place, `security::saml`, and only to verify a
+    # signature with the identity provider's public key. There is no fixed
+    # release to move to, so this is written down rather than waited for, and
+    # it stops being true the moment anything here holds an RSA private key.
+    { id = "RUSTSEC-2023-0071", reason = "no RSA private key operation exists here; verification only" },
+]
+
+[licenses]
+# A licence not on this list stops the build rather than shipping in it. The
+# list is the permissive set the tree actually carries, and only that: an
+# allowance nothing uses is a licence nobody looked at, waiting to let
+# something through the day a dependency changes.
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    # the list of trusted certificate authorities webpki-roots carries
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "allow"
+# a crate whose whole purpose is to run code at build time, or to be a
+# stand-in for one, is worth knowing about by name
+deny = []
+skip = []
+
+[sources]
+# crates.io, and the two git repositories this project builds from. Anything
+# else is a dependency somebody added from somewhere nobody agreed to.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/codefin-lab/velocore"]

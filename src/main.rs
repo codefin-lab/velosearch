@@ -38,7 +38,7 @@ async fn root() -> impl IntoResponse {
         "cluster_uuid": uuid,
         "version": {
             "distribution": "velosearch",
-            "number": "3.9.0",
+            "number": velosearch::OPENSEARCH_VERSION,
             "build_type": "tar",
             "build_hash": build_hash(),
             "build_date": "2026-01-01T00:00:00.000000Z",
@@ -694,6 +694,9 @@ fn app(store: Store) -> Router {
             "/_plugins/_security_analytics/threat_intel/iocs",
             get(api::plugins::security_analytics::threat_intel_iocs),
         )
+        // what a scraper reads: the same numbers `_nodes/stats` answers,
+        // in the format a monitoring system can take
+        .route("/_prometheus/metrics", get(api::prometheus::metrics))
         .route("/_plugins/_security/authinfo", get(security::api::authinfo))
         .route("/_plugins/_security/health", get(security::api::health))
         .route("/_plugins/_security/api/permissionsinfo", get(security::api::permissions_info))
@@ -763,19 +766,49 @@ fn max_content_bytes() -> usize {
         * 1024
 }
 
-/// The commit this binary was built from, compiled in by `build.rs`.
-///
-/// A gate that asks a node for this and compares it with the binary it meant
-/// to start can tell that it is counting the right build's answers; without
-/// it, a node left over from another session on the same port is
-/// indistinguishable from the one just started.
+/// The commit this binary was built from: the library's, so that what the
+/// server reports and what a handler reports are one answer.
 pub fn build_hash() -> &'static str {
-    env!("VELOSEARCH_BUILD_HASH")
+    velosearch::build_hash()
+}
+
+/// Start the log the way the environment asks for it.
+///
+/// It was `WARN`, compiled in, with nothing that could change it: the one
+/// thing an operator wants at the moment something is wrong -- more detail --
+/// needed a rebuild and a redeployment to get. `VELOSEARCH_LOG` (or
+/// `RUST_LOG`, which is what anyone reaching for this will try first) takes a
+/// filter in the usual form: a level, or per-module levels such as
+/// `warn,velosearch::cluster=debug`. `VELOSEARCH_LOG_FORMAT=json` writes each
+/// line as an object instead, for a collector that would otherwise have to
+/// parse prose.
+fn start_the_log() {
+    let filter = std::env::var("VELOSEARCH_LOG")
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .unwrap_or_else(|_| "warn".to_string());
+    // a filter nobody can parse is not a reason to start silent, nor a reason
+    // to refuse to start: the node says so and keeps the default
+    let (env_filter, complaint) = match tracing_subscriber::EnvFilter::try_new(filter.clone()) {
+        Ok(f) => (f, None),
+        Err(e) => (
+            tracing_subscriber::EnvFilter::new("warn"),
+            Some(format!("log filter [{filter}] not understood ({e}); using [warn]")),
+        ),
+    };
+    let json = std::env::var("VELOSEARCH_LOG_FORMAT").map(|v| v == "json").unwrap_or(false);
+    if json {
+        tracing_subscriber::fmt().json().with_env_filter(env_filter).init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    }
+    if let Some(why) = complaint {
+        eprintln!("velosearch: {why}");
+    }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::WARN).init();
+    start_the_log();
     // asked what it is rather than asked to be a node: a gate compares this
     // with what a running node reports, and an argument that is not
     // understood is said so rather than quietly starting a server
@@ -786,7 +819,15 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             "--version" | "-V" => {
-                println!("velosearch 3.9.0 ({})", build_hash());
+                // this project's version, the API it answers as, and the
+                // commit -- a release names all three, and a gate that reads
+                // this can tell a tag from the build it produced
+                println!(
+                    "velosearch {} (OpenSearch {}, build {})",
+                    velosearch::VERSION,
+                    velosearch::OPENSEARCH_VERSION,
+                    build_hash()
+                );
                 return Ok(());
             }
             other => {

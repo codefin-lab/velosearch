@@ -118,7 +118,7 @@ pub(crate) async fn cat_by_name(
                     // what the node is and what runs it, which a caller
                     // naming its own columns asks for
                     ("pid", std::process::id().to_string()),
-                    ("version", "3.9.0".into()),
+                    ("version", crate::OPENSEARCH_VERSION.into()),
                     ("type", "tar".into()),
                     ("build", "velosearch".into()),
                     ("jdk", "21".into()),
