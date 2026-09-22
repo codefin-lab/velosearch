@@ -131,6 +131,18 @@ The clock is a cluster setting, and a request may name its own.
 |---|---|
 | `search.default_search_timeout` | the deadline for a search that names none. Default `-1`, which is no deadline. A request's own `timeout` — in the body or in the query string — stands over it. A search that reaches its deadline answers `"timed_out": true` with what it had collected, which is what OpenSearch answers. |
 
+## What it says about itself
+
+The log was a level compiled into the binary, and there was no endpoint a
+monitoring system could read. [observability.md](observability.md) has both in
+full; these are the settings.
+
+| | |
+|---|---|
+| `VELOSEARCH_LOG` / `RUST_LOG` | the log filter: a level (`info`), or per-module levels (`warn,velosearch::cluster=debug`). Default `warn`. A filter that cannot be parsed leaves the default and says so. |
+| `VELOSEARCH_LOG_FORMAT` | `json` writes each line as an object, for a collector. Anything else is the readable form. |
+| `GET /_prometheus/metrics` | not a setting: the endpoint a scraper reads, with the metric names OpenSearch's exporter plugin publishes. `?indices=false` leaves out the per-index series. |
+
 ## Asynchronous search
 
 Cluster settings, changed with `PUT _cluster/settings`. The first is the

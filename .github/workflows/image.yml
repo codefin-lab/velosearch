@@ -126,6 +126,20 @@ jobs:
           test "$status" = healthy
           docker rm -f candidate
 
+      # The image is scanned before it is pushed rather than after: an image
+      # with a known critical hole in its base packages does not reach the
+      # registry at all, so nobody can pull it while somebody decides.
+      # `ignore-unfixed` because a vulnerability with no fix published is not
+      # something this build can act on.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: velosearch:candidate
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
       - name: Push
         run: |
           for tag in $(echo "${{ steps.tags.outputs.tags }}" | tr ',' ' '); do

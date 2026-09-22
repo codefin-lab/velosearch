@@ -76,6 +76,15 @@ items, which is why moving a function rarely means widening anything.
 cargo build --release          # no warnings
 cargo clippy --all-targets     # no warnings
 cargo fmt --check              # no diff
+cargo deny check               # advisories, licences and where a crate came from
+```
+
+A change that touches what a node refuses, or what it reports about itself,
+has two gates of its own -- each starts the nodes it needs:
+
+```bash
+python3 tools/limits_check.py    # the memory, the concurrency and the time
+python3 tools/metrics_check.py   # the exporter, its numbers, and the log
 ```
 
 and the corpus, which is the point of the whole thing:
@@ -115,6 +124,8 @@ Every number in the README is produced by one of these.
 | `tools/dashboards_gate.py` | OpenSearch Dashboards' own API suite against the console's server, with the Node server's baseline |
 | `tools/dashboards_check.py`, `tools/console_diff.py` | what that suite never asks about, and the shell compared field by field with the Node server's |
 | `tools/osd_pin.py`, `tools/osd_sample_data.js` | what the console pins from a running Dashboards |
+| `tools/limits_check.py` | the three ceilings a node refuses at, each put in the state and its refusal read |
+| `tools/metrics_check.py` | the Prometheus endpoint parsed as a scraper parses it, and the log |
 
 ## What to read first
 

@@ -32,7 +32,7 @@ use super::state::{
 use super::transport::NodeId;
 
 /// The version this node reports, as `_nodes` has it.
-const VERSION: &str = "3.9.0";
+const VERSION: &str = crate::OPENSEARCH_VERSION;
 
 /// What a decider says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

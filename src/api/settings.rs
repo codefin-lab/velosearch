@@ -71,7 +71,7 @@ pub(crate) fn add_human_settings(view: &mut Value, st: &IdxState) {
         o.insert(
             "version".into(),
             json!({
-                "created": ver, "created_string": "3.9.0",
+                "created": ver, "created_string": crate::OPENSEARCH_VERSION,
             }),
         );
     } else if let Some(o) = view.as_object_mut() {
