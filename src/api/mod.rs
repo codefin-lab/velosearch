@@ -61,6 +61,7 @@ mod mapping;
 pub use mapping::*;
 mod nodes;
 pub use nodes::*;
+pub mod prometheus;
 mod search_api;
 pub use search_api::*;
 mod settings;

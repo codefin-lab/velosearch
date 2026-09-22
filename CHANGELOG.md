@@ -37,6 +37,10 @@ by a script in `tools/`, and [README.md](README.md) says which.
 - **33 of 33** checks of the three ceilings a node is held to -- the memory a
   request may take, how many requests it runs at once, and how long one may
   walk (`tools/limits_check.py`, [docs/limits.md](docs/limits.md))
+- **23 of 23** checks of what an operator can see: the Prometheus endpoint
+  parsed the way a scraper parses it, its numbers moved by writing, searching
+  and being refused, and the log turned up without a rebuild
+  (`tools/metrics_check.py`, [docs/observability.md](docs/observability.md))
 - **quicker or lighter on all 34 dimensions**, measured beside OpenSearch 3.1.0
   on the same Google Compute Engine `n2-standard-8`, with the same corpus and
   the same client ([docs/performance.md](docs/performance.md))
@@ -90,3 +94,18 @@ Dashboards' browser application. Recently added:
 - `timeout` on a search, enforced: the walk reads the deadline as it goes and
   answers with what it had, `"timed_out": true`, and
   `search.default_search_timeout` sets one for the searches that ask for none
+- `GET /_prometheus/metrics`: the numbers `_nodes/stats` and `_cluster/health`
+  already answer, rendered in the exposition format under the metric names
+  OpenSearch's exporter plugin publishes, so a dashboard written for
+  OpenSearch reads this node unchanged -- including what each pool refused and
+  what each breaker holds
+- a log that can be turned up without a rebuild: `VELOSEARCH_LOG` takes a
+  filter (per module, as usual) and `VELOSEARCH_LOG_FORMAT=json` writes lines
+  a collector can read. It was `WARN`, compiled in
+- the dependencies are checked rather than trusted: `cargo deny` gates
+  advisories, licences and where each crate came from on every run, the
+  release publishes a bill of materials beside each binary, and the images are
+  scanned before they are pushed and signed with the workflow's own identity
+- the tag and the manifest have to agree on the version before a release
+  builds anything, and `--version` reports this project's version, the
+  OpenSearch version it answers as, and the commit
