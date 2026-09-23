@@ -25,6 +25,8 @@ mod run;
 pub use run::*;
 pub(crate) use run::{Finish, finish_search};
 
+mod budget;
+pub(crate) use budget::*;
 mod calendar;
 pub(crate) use calendar::*;
 mod candidates;
@@ -588,6 +590,10 @@ pub struct Outcome {
     /// a document-level security filter was laid over the query, which
     /// makes it a real query: nothing ends early under it
     pub filtered: bool,
+    /// the search stopped at its deadline, and what is here is what it had
+    /// collected by then -- the reference's `timed_out`, measured
+    #[serde(default)]
+    pub timed_out: bool,
     /// filled only for a coordinator, by a node answering it
     #[serde(default)]
     pub native: Option<NativeParts>,

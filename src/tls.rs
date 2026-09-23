@@ -5,6 +5,8 @@
 //! the config directory (PEM), or made up as a self-signed pair the first
 //! time nothing is there, the way the plugin's demo configuration does.
 
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -127,12 +129,12 @@ pub fn load_or_make(
         make_self_signed(&cert_path, &key_path)?;
         eprintln!("velosearch: made a self-signed certificate at {}", cert_path.display());
     }
-    let certs =
-        rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(&cert_path)?))
-            .collect::<Result<Vec<_>, _>>()?;
-    let key =
-        rustls_pemfile::private_key(&mut std::io::BufReader::new(std::fs::File::open(&key_path)?))?
-            .ok_or_else(|| anyhow::anyhow!("no private key in {}", key_path.display()))?;
+    // PEM is read by rustls's own types rather than by `rustls-pemfile`,
+    // which is archived upstream (RUSTSEC-2025-0134) and was in its last
+    // release a wrapper around exactly this code.
+    let certs = CertificateDer::pem_file_iter(&cert_path)?.collect::<Result<Vec<_>, _>>()?;
+    let key = PrivateKeyDer::from_pem_file(&key_path)
+        .map_err(|e| anyhow::anyhow!("no private key in {}: {e}", key_path.display()))?;
     Ok((certs, key))
 }
 
@@ -173,7 +175,7 @@ pub async fn serve_tls(
         (Some(ca_path), "OPTIONAL" | "REQUIRE") => {
             let mut roots = rustls::RootCertStore::empty();
             let pem = std::fs::read(ca_path)?;
-            for c in rustls_pemfile::certs(&mut &pem[..]).flatten() {
+            for c in CertificateDer::pem_slice_iter(&pem).flatten() {
                 let _ = roots.add(c);
             }
             let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots));
@@ -384,7 +386,7 @@ impl TransportTls {
         let mut roots = rustls::RootCertStore::empty();
         let pem = std::fs::read(&ca_path)?;
         let mut added = 0usize;
-        for c in rustls_pemfile::certs(&mut &pem[..]).flatten() {
+        for c in CertificateDer::pem_slice_iter(&pem).flatten() {
             if roots.add(c).is_ok() {
                 added += 1;
             }

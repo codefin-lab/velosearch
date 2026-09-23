@@ -550,6 +550,7 @@ const SERVED: &[&str] = &[
     "_nodes",
     "_opendistro",
     "_plugins",
+    "_prometheus",
     "_rank_eval",
     "_recovery",
     "_refresh",
@@ -972,6 +973,12 @@ pub fn action_for(method: &Method, path: &str) -> Option<String> {
             _ => "cluster:monitor/state",
         },
         (false, "_nodes", _) => "cluster:monitor/nodes/info",
+        // The metrics endpoint answers what `_nodes/stats` and
+        // `_cluster/health` answer, so it is judged as what it is: a read of
+        // the cluster's statistics. Unjudged it was neither -- an
+        // authenticated caller with no permission at all scraped every index
+        // name and count out of a node.
+        (false, "_prometheus", _) => "cluster:monitor/stats",
         // Everything under `_cat` that reads an index is an index action.
         // The fallback used to make them all `cluster:monitor/state`, so a
         // monitoring identity with no index permission read every index's

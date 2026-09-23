@@ -16,6 +16,26 @@ permissions:
   packages: write
 
 jobs:
+  # A tag says which version this is; the manifest says which version the
+  # binary reports. Nothing was comparing them, so `v0.4.0` could have built a
+  # binary that calls itself 0.3.2 and nobody would have noticed until
+  # somebody read `--version` on a machine and could not tell which build they
+  # had. This is a few seconds, and it runs before anything is built.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag and the manifest say the same version
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          want="${tag#v}"
+          crate="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          echo "tag [$tag] -> [$want]; manifest [$crate]"
+          if [ "$want" != "$crate" ]; then
+            echo "::error::the tag says $want and Cargo.toml says $crate"
+            exit 1
+          fi
+
   # The gates run again on the tag. A release that was not measured is not a
   # release: the tag may not be the commit the last green run was on.
   # This used to be three commands of its own -- fmt, clippy and the unit
@@ -23,6 +43,7 @@ jobs:
   # the refusal check, the fuzzer or the restart check having run on it. It is
   # the same job the branch runs, not a shorter one that reads like it.
   gates:
+    needs: version
     uses: ./.github/workflows/ci.yml
 
   binaries:
@@ -71,14 +92,34 @@ jobs:
           }
           package full ""
           package light "-nodict"
+      # What is in the build, as a document somebody can read: every crate,
+      # its version and its licence. A release that ships a binary without one
+      # cannot answer "does this contain <the crate in this week's advisory>"
+      # except by rebuilding it.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+      - name: Bill of materials
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cargo cyclonedx --all-features --format json
+          mv velosearch.cdx.json "dist/velosearch-${version}-${{ matrix.target }}.cdx.json"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/*.tar.gz*
+          path: |
+            dist/*.tar.gz*
+            dist/*.cdx.json
 
   image:
     needs: gates
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # what cosign signs with: this workflow's own identity, no key
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -93,12 +134,37 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # What is in the image that is not this project: the base image's
+      # packages. A release that publishes an image with a known critical
+      # vulnerability in it should say so before somebody pulls it, not after.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+        if: startsWith(github.ref, 'refs/tags/')
+
+      # Signed with the workflow's own identity rather than a key somebody
+      # holds: `cosign verify` then says which repository, which workflow and
+      # which commit produced the image, and there is no key to leak.
+      - uses: sigstore/cosign-installer@v3
+        if: startsWith(github.ref, 'refs/tags/')
+      - name: Sign the image
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/${{ github.repository }}@${DIGEST}"
 
   # the same image, to Google Artifact Registry, tagged with the version
   gcp-image:

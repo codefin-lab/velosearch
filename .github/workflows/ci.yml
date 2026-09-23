@@ -9,6 +9,23 @@ on:
   workflow_call:
 
 jobs:
+  # What the three hundred crates under this build are: whether one of them
+  # has a published advisory, what licence each carries, and whether any of
+  # them comes from somewhere nobody agreed to. Nothing was reading any of
+  # that. `deny.toml` holds the policy and the reasons.
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.98.0'
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Advisories, licences and sources
+        run: cargo deny --all-features check
+
   conformance:
     runs-on: ubuntu-latest
     steps:
@@ -94,6 +111,21 @@ jobs:
 
       - name: Malformed input at everything that parses
         run: python3 tools/fuzz_check.py --rounds 2000
+
+      # The three ceilings a node has to have before it can be left alone with
+      # real traffic: the memory its requests may take, how many of them it
+      # runs at once, and how long one of them may walk. Each was reported
+      # before it was enforced, so each is checked by putting a node in the
+      # state and reading what it answers.
+      - name: The memory, the concurrency and the time a request may take
+        run: python3 tools/limits_check.py
+
+      # A ceiling an operator cannot see being reached is a ceiling nobody
+      # acts on: the exporter is scraped and parsed here the way Prometheus
+      # would parse it, and the log is asked to say more than it does by
+      # default.
+      - name: What an operator can see
+        run: python3 tools/metrics_check.py
 
       # A write is answered once it is recorded and reaches the index at the
       # next commit; what a node does with that record when it starts again is

@@ -204,6 +204,22 @@ fn nodes_path_parts(path: &str) -> Vec<String> {
     rest.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
 }
 
+/// One node's statistics, for a caller inside the server rather than one on
+/// the network -- the Prometheus exporter, which renders what this answers
+/// rather than working the numbers out a second time.
+pub(crate) fn nodes_stats_of(
+    store: &Store,
+    p: &Params,
+    nodes: &[String],
+    metrics: Option<&String>,
+    index_metric: Option<&String>,
+    level: &str,
+) -> Response {
+    let mut p = p.clone();
+    p.insert("level".to_string(), level.to_string());
+    nodes_stats(store, &p, nodes, metrics, index_metric)
+}
+
 /// `_nodes/stats` -- what each node has been doing.
 fn nodes_stats(
     store: &Store,
@@ -495,11 +511,16 @@ fn machine_stats(store: &Store) -> Value {
         }
         pools.insert(pool.name.to_string(), entry);
     }
-    let breaker = |limit: u64, overhead: f64| {
+    // What each breaker holds and how often it has refused, read from the
+    // breakers themselves: these were the limits alone, computed for the
+    // answer and enforced nowhere.
+    let breaker = |b: &crate::breaker::Breaker, used: u64| {
+        let limit = b.limit(Some(store));
         json!({"limit_size_in_bytes": limit,
                "limit_size": crate::api::shared::sized(None, limit),
-               "estimated_size_in_bytes": 0, "estimated_size": "0b",
-               "overhead": overhead, "tripped": 0})
+               "estimated_size_in_bytes": used,
+               "estimated_size": crate::api::shared::sized(None, used),
+               "overhead": b.overhead, "tripped": b.tripped()})
     };
     let zero_pool = json!({"used_in_bytes": 0, "max_in_bytes": 0, "peak_used_in_bytes": 0,
         "peak_max_in_bytes": 0,
@@ -590,12 +611,13 @@ fn machine_stats(store: &Store) -> Value {
                       "rx_size_in_bytes": 0, "tx_count": 0, "tx_size_in_bytes": 0},
         "http": {"current_open": 0, "total_opened": 0},
         // the limits the reference derives from its heap, derived here from
-        // what stands for it
+        // what stands for it -- and what each is holding at this moment
         "breakers": {
-            "request": breaker(mem.total * 60 / 100, 1.0),
-            "fielddata": breaker(mem.total * 40 / 100, 1.03),
-            "in_flight_requests": breaker(mem.total, 2.0),
-            "parent": breaker(mem.total * 95 / 100, 1.0),
+            "request": breaker(&crate::breaker::REQUEST, crate::breaker::REQUEST.used()),
+            "fielddata": breaker(&crate::breaker::FIELDDATA, crate::breaker::FIELDDATA.used()),
+            "in_flight_requests":
+                breaker(&crate::breaker::IN_FLIGHT, crate::breaker::IN_FLIGHT.used()),
+            "parent": breaker(&crate::breaker::PARENT, crate::breaker::parent_used(Some(store))),
         },
         "script": {"compilations": 0, "cache_evictions": 0, "compilation_limit_triggered": 0},
         "discovery": {
@@ -838,8 +860,8 @@ fn plugins() -> Value {
             .map(|name| {
                 json!({
                     "name": name,
-                    "version": "3.9.0",
-                    "opensearch_version": "3.9.0",
+                    "version": crate::OPENSEARCH_VERSION,
+                    "opensearch_version": crate::OPENSEARCH_VERSION,
                     "java_version": "11",
                     "description": format!("the {name} plugin"),
                     "classname": "",
@@ -879,8 +901,8 @@ fn modules() -> Value {
             .map(|name| {
                 json!({
                     "name": name,
-                    "version": "3.9.0",
-                    "opensearch_version": "3.9.0",
+                    "version": crate::OPENSEARCH_VERSION,
+                    "opensearch_version": crate::OPENSEARCH_VERSION,
                     "java_version": "11",
                     "description": format!("the {name} module"),
                     "classname": "",
@@ -941,7 +963,7 @@ fn nodes_info(p: &Params, nodes: &[String], metrics: Option<&String>) -> Respons
             let Some((name, mut rest)) = other_node_identity(id) else { continue };
             if let Some(o) = rest.as_object_mut() {
                 o.insert("name".into(), name);
-                o.insert("version".into(), json!("3.9.0"));
+                o.insert("version".into(), json!(crate::OPENSEARCH_VERSION));
                 o.insert("build_type".into(), json!("tar"));
                 o.insert("build_hash".into(), json!("velosearch"));
             }
@@ -951,7 +973,7 @@ fn nodes_info(p: &Params, nodes: &[String], metrics: Option<&String>) -> Respons
         }
         let mut local = json!({
             "name": me.name, "transport_address": me.transport_address,
-            "host": me.host, "ip": me.host, "version": "3.9.0",
+            "host": me.host, "ip": me.host, "version": crate::OPENSEARCH_VERSION,
             "build_type": "tar", "build_hash": "velosearch", "roles": me.roles,
             "attributes": me.attributes,
             "os": {"refresh_interval_in_millis": 1000,

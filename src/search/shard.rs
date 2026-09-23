@@ -28,11 +28,15 @@ pub(crate) fn search_shard<C: velocore::collector::Collector>(
     query: &dyn velocore::query::Query,
     collector: &C,
     fanned_out: bool,
+    clock: &std::sync::Arc<Clock>,
 ) -> velocore::Result<C::Fruit> {
+    // every walk is held to the search's clock: what it collected before the
+    // deadline is the answer, and the documents after it are not visited
+    let collector = &Timed::new(collector, clock);
     if !fanned_out {
         return searcher.search(query, collector);
     }
-    let scoring = if collector.requires_scoring() {
+    let scoring = if velocore::collector::Collector::requires_scoring(collector) {
         velocore::query::EnableScoring::enabled_from_statistics_provider(searcher, searcher)
     } else {
         velocore::query::EnableScoring::disabled_from_searcher(searcher)
@@ -96,6 +100,7 @@ pub(crate) fn search_one_shard(
     page_want: usize,
     fanned_out: bool,
     views: &crate::security::view::Views,
+    budget: &Budget,
 ) -> std::result::Result<Option<ShardOut>, Response> {
     let Some(st) = store.get(name) else { return Ok(None) };
     let started = std::time::Instant::now();
@@ -121,6 +126,7 @@ pub(crate) fn search_one_shard(
             page_want,
             fanned_out,
             views,
+            budget,
         )
     };
     let took = started.elapsed().as_nanos() as u64;
@@ -175,6 +181,7 @@ fn query_shard(
     page_want: usize,
     fanned_out: bool,
     views: &crate::security::view::Views,
+    budget: &Budget,
 ) -> std::result::Result<Option<ShardOut>, Response> {
     let Some(st) = store.get(name) else { return Ok(None) };
     // the caller's view of this index: what the query may ask, what the
@@ -351,7 +358,7 @@ fn query_shard(
     let profiling = body.get("profile").map(|v| v == true).unwrap_or(false);
     let agg_collector = MaybeAgg(match (&this_agg, profiling) {
         (Some(a), false) => {
-            let ctxp = AggContextParams::new(Default::default(), g.index.tokenizers().clone());
+            let ctxp = AggContextParams::new(budget.aggs(), g.index.tokenizers().clone());
             Some(DistributedAggregationCollector::from_aggs(a.clone(), ctxp))
         }
         _ => None,
@@ -363,7 +370,7 @@ fn query_shard(
         // `size: 0` asks for counts and aggregations only. Collecting a
         // page anyway means scoring and heap-ordering every match for a
         // result that is thrown away.
-        search_shard(&searcher, &q, &(Count, agg_collector), fanned_out)
+        search_shard(&searcher, &q, &(Count, agg_collector), fanned_out, &budget.clock)
             .map(|(c, agg)| (c, Vec::new(), agg))
     } else if sort_keys.is_empty() && agg_collector.0.is_none() && count_without_walking(query_json)
     {
@@ -380,8 +387,13 @@ fn query_shard(
         // are kept. Splitting its segments across the pool costs more in
         // coordination than the walk itself, and steals cores from the
         // aggregations, which are the expensive shape and do need them.
-        let topk =
-            search_shard(&searcher, &q, &TopDocs::with_limit(want.max(1)).order_by_score(), true);
+        let topk = search_shard(
+            &searcher,
+            &q,
+            &TopDocs::with_limit(want.max(1)).order_by_score(),
+            true,
+            &budget.clock,
+        );
         topk.and_then(|docs| {
             let cands = docs
                 .into_iter()
@@ -400,7 +412,7 @@ fn query_shard(
         // an aggregation needs every document anyway, so there is nothing
         // to prune and hits ride along in the same pass
         let collector = (Count, TopDocs::with_limit(want.max(1)).order_by_score(), agg_collector);
-        search_shard(&searcher, &q, &collector, fanned_out).map(|(c, docs, agg)| {
+        search_shard(&searcher, &q, &collector, fanned_out, &budget.clock).map(|(c, docs, agg)| {
             let cands = docs
                 .into_iter()
                 .map(|(score, addr)| Cand {
@@ -486,12 +498,14 @@ fn query_shard(
             },
             agg_collector,
         );
-        search_shard(&searcher, &q, &collector, fanned_out).map(|(c, mut cands, agg)| {
-            for cand in cands.iter_mut() {
-                cand.shard = shard_idx;
-            }
-            (c, cands, agg)
-        })
+        search_shard(&searcher, &q, &collector, fanned_out, &budget.clock).map(
+            |(c, mut cands, agg)| {
+                for cand in cands.iter_mut() {
+                    cand.shard = shard_idx;
+                }
+                (c, cands, agg)
+            },
+        )
     };
     let collected_nanos = collecting.elapsed().as_nanos() as u64;
     let (count, shard_cands, shard_agg) = match searched {
@@ -629,6 +643,23 @@ impl velocore::collector::SegmentCollector for MaybeAggSegment {
 /// A failure while a shard was searched, as a response. A script that failed
 /// carries its own error, which is reported as that shard's failure.
 pub(crate) fn search_error_response(text: &str, index: &str) -> Response {
+    // A search that ran past the memory its aggregations were given did not
+    // fail to parse and was not a bad request: it was refused, by the
+    // breaker whose budget it was spending. It is told the way the breaker
+    // tells it, so a client reads the same `circuit_breaking_exception` and
+    // the same 429 wherever the limit was reached.
+    if text.contains("memory limit was exceeded") {
+        crate::breaker::REQUEST.count_trip();
+        let (limit, wanted) = agg_memory_numbers(text);
+        return crate::breaker::Trip {
+            breaker: "request",
+            label: format!("<agg [{index}]>"),
+            wanted,
+            limit,
+            durability: "TRANSIENT",
+        }
+        .response_saying(text);
+    }
     // the engine quotes the message it carries: the JSON ends before the
     // closing quote
     if let Some(detail) =
@@ -658,6 +689,30 @@ pub(crate) fn search_error_response(text: &str, index: &str) -> Response {
         ));
     }
     err(StatusCode::BAD_REQUEST, "search_phase_execution_exception", text.to_string())
+}
+
+/// The two numbers VeloCore names when an aggregation runs past its budget:
+/// what it was allowed, and what it had reached.
+///
+/// They are written as `Limit: 146 B, Current: 568 B` -- a number, a space
+/// and a unit -- so they are read back rather than guessed at, and a message
+/// worded differently one day leaves zeroes rather than wrong numbers.
+fn agg_memory_numbers(text: &str) -> (u64, u64) {
+    let after = |word: &str| -> u64 {
+        let Some(rest) = text.split_once(word) else { return 0 };
+        let mut parts = rest.1.split_whitespace();
+        let Some(n) = parts.next().and_then(|n| n.trim_end_matches(',').parse::<f64>().ok()) else {
+            return 0;
+        };
+        let scale: f64 = match parts.next().map(|u| u.trim_end_matches(',').to_lowercase()) {
+            Some(u) if u.starts_with("kb") || u.starts_with("k") => 1024.0,
+            Some(u) if u.starts_with("mb") || u.starts_with("m") => 1024.0 * 1024.0,
+            Some(u) if u.starts_with("gb") || u.starts_with("g") => 1024.0 * 1024.0 * 1024.0,
+            _ => 1.0,
+        };
+        (n * scale) as u64
+    };
+    (after("Limit:"), after("Current:"))
 }
 
 /// An aggregation that cannot read its field fails on the shard, and is
