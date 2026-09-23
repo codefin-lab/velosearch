@@ -7,6 +7,8 @@
 //!   VELOSEARCH_CONSOLE_ADDR       where to listen (default 127.0.0.1:5601)
 //!   VELOSEARCH_CONSOLE_PATH       an OpenSearch Dashboards distribution
 //!   VELOSEARCH_CONSOLE_BASE_PATH  the path everything is served under
+//!   VELOSEARCH_CONSOLE_BRANDING   `opensearch` leaves the distribution's own
+//!                                 name, marks and colours in place
 //!   VELOSEARCH_ENGINE             the engine behind it
 //!   VELOSEARCH_CONSOLE_OVERRIDE   `key=value` pairs, comma separated: settings
 //!                                  an operator fixes and no reader may change
@@ -332,6 +334,29 @@ async fn ui_asset(
     Path(rest): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    // the brand's own marks and stylesheet are compiled in rather than read
+    // from the distribution, and answer under `/ui/velosearch/`
+    if let Some(name) = rest.strip_prefix("velosearch/") {
+        use velosearch::console::brand;
+        if name == "brand.css" {
+            return served(
+                Some(velosearch::console::assets::Served {
+                    bytes: brand::stylesheet().into_bytes(),
+                    kind: "text/css; charset=utf-8",
+                    encoding: None,
+                }),
+                "public, max-age=3600",
+            );
+        }
+        return served(
+            brand::asset(name).map(|(bytes, kind)| velosearch::console::assets::Served {
+                bytes: bytes.to_vec(),
+                kind,
+                encoding: None,
+            }),
+            "public, max-age=31536000",
+        );
+    }
     served(console.console.ui_asset(&rest, accepts(&headers)), "public, max-age=31536000")
 }
 

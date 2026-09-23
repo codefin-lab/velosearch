@@ -31,6 +31,31 @@ bundles, its assets, its translations and its plugin manifests from it, and
 nothing else of the Node server is run. The settings are in
 [settings.md](settings.md) under "The console".
 
+## What it looks like
+
+The application is OpenSearch Dashboards', and out of the distribution it
+calls itself OpenSearch Dashboards and draws itself in OpenSearch's blue.
+Neither is in the bundles: the name, the three marks and the favicon come out
+of the `branding` block in the metadata the server injects -- a contract the
+front end already reads -- and the colours are a stylesheet. So the console
+serves VeloSearch's.
+
+| | |
+|---|---|
+| the name | `VeloSearch`, in the tab and wherever the header writes it |
+| the wordmark | the header, one for a light page and one for a dark one |
+| the mark | the collapsed navigation, the loading screen and the favicon |
+| the colours | `#00C566` is the mark's green; `#00753C` is what text, a link and a filled button are, because the mark's green reads at 2.3 against white and that one at 5.8; `#004628` is the header; `#E1F4E9` is a tint. A dark page swaps the first two, where the bright green is the one that can be read |
+
+The marks are compiled into the binary rather than read from a directory --
+a console is one binary pointed at a distribution, and an image a deployment
+could forget is a header with a hole in it. They are served under
+`/ui/velosearch/`, and the stylesheet with them.
+
+`VELOSEARCH_CONSOLE_BRANDING=opensearch` leaves the distribution's own name,
+marks and colours in place, which is what `tools/console_diff.py` wants when
+it compares this server's metadata with the Node server's field by field.
+
 ## What it pins
 
 Some of what the front end boots from is compiled into the Node server

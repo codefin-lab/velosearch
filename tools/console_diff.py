@@ -26,6 +26,11 @@ import urllib.request
 LIVE = {
     "basePath": "this server's own",
     "serverBasePath": "this server's own",
+    # the name, the marks and the colours are this console's own: it is
+    # VeloSearch's console rather than a copy of the reference's chrome.
+    # `VELOSEARCH_CONSOLE_BRANDING=opensearch` puts the distribution's back,
+    # which is how this field can still be compared when it is worth it.
+    "branding": "this console's own; see docs/console.md",
 }
 failures = []
 

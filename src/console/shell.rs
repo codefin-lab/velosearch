@@ -22,7 +22,7 @@ impl Console {
         format!(
             "{head}<osd-csp data=\"{csp}\"></osd-csp>\
              <osd-injected-metadata data=\"{metadata}\"></osd-injected-metadata>{tail}",
-            head = self.with_base_path(&self.pinned.shell_head),
+            head = self.branded_head(&self.with_base_path(&self.pinned.shell_head)),
             tail = self.with_base_path(&self.pinned.shell_tail),
             csp = escape(&csp.to_string()),
             metadata = escape(&metadata.to_string()),
@@ -234,13 +234,48 @@ if (window.__osdStrictCsp__ && window.__osdCspNotEnforced__) {{
     }
 
     /// Where the console's own images are, and what it calls itself.
+    ///
+    /// VeloSearch's, unless an operator asked for the distribution's own
+    /// (`VELOSEARCH_CONSOLE_BRANDING=opensearch`). Either way the URLs are
+    /// made absolute against this server's base path, since the front end
+    /// puts them in the page as it finds them.
     fn branding(&self) -> Value {
+        if super::brand::wanted() {
+            return super::brand::block(&|path| self.at(path), &self.pinned.branding);
+        }
         let mut found = self.pinned.branding.clone();
         if let Some(url) = found.get("assetFolderUrl").and_then(|v| v.as_str()) {
             let at = self.at(url);
             found["assetFolderUrl"] = json!(at);
         }
         found
+    }
+
+    /// The head of the page with this brand's title, icons and stylesheet in
+    /// it.
+    ///
+    /// They go last, immediately before the head ends, because a browser
+    /// takes the last icon and the last stylesheet it is given: the
+    /// distribution's own are left where they are rather than cut out, so a
+    /// head shaped differently in some later version still ends up branded
+    /// rather than broken.
+    fn branded_head(&self, head: &str) -> String {
+        if !super::brand::wanted() {
+            return head.to_string();
+        }
+        let titled = match (head.find("<title>"), head.find("</title>")) {
+            (Some(open), Some(close)) if open < close => {
+                format!("{}{}{}", &head[..open + 7], super::brand::TITLE, &head[close..])
+            }
+            _ => head.to_string(),
+        };
+        let ours = super::brand::head(&|path| self.at(path));
+        match titled.rfind("</head>") {
+            Some(at) => format!("{}{ours}{}", &titled[..at], &titled[at..]),
+            // a head that does not end is a distribution shaped differently
+            // than every one seen so far; the page is still served
+            None => titled,
+        }
     }
 
     /// Whether the policy this server sends allows an inline script.
@@ -320,6 +355,57 @@ mod tests {
         assert!(page.contains("<osd-csp data="), "no csp element");
         assert!(page.contains("<osd-injected-metadata data="), "no metadata element");
         assert!(page.contains("bootstrap.js"), "nothing would start");
+    }
+
+    #[test]
+    fn the_page_calls_itself_velosearch_rather_than_the_distribution_s_name() {
+        let page = console("").page(json!({}));
+        assert!(page.contains("<title>VeloSearch</title>"), "the tab still says something else");
+        let meta = metadata_of(&page);
+        assert_eq!(meta["branding"]["applicationTitle"], "VeloSearch");
+        // the header reads this, and it is the one place the old name would
+        // have survived the title being replaced
+        assert!(
+            !meta["branding"].to_string().contains("OpenSearch Dashboards"),
+            "the branding still names the distribution"
+        );
+    }
+
+    #[test]
+    fn the_marks_and_the_stylesheet_are_in_the_page_under_its_base_path() {
+        let page = console("/console").page(json!({}));
+        for named in [
+            "/console/ui/velosearch/brand.css",
+            "/console/ui/velosearch/favicon.png",
+            "/console/ui/velosearch/mark.png",
+        ] {
+            assert!(page.contains(named), "the page does not name {named}");
+        }
+        let meta = metadata_of(&page);
+        assert_eq!(meta["branding"]["logo"]["defaultUrl"], "/console/ui/velosearch/logo.png");
+        assert_eq!(meta["branding"]["logo"]["darkModeUrl"], "/console/ui/velosearch/logo-dark.png");
+        // and they come after the distribution's own, which is what makes
+        // them the ones a browser ends up with
+        let ours = page.find("/console/ui/velosearch/favicon.png").expect("ours");
+        let theirs = page.find("/console/ui/favicons/favicon-32x32.png").expect("the pinned one");
+        assert!(theirs < ours, "the distribution's icon is served after this brand's");
+        assert!(ours < page.find("</head>").expect("a head that ends"));
+    }
+
+    /// The metadata a page carries, read back the way the front end reads it.
+    fn metadata_of(page: &str) -> Value {
+        let raw = page
+            .split("<osd-injected-metadata data=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("the metadata element");
+        let decoded = raw
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
+        serde_json::from_str(&decoded).expect("json a browser could read")
     }
 
     #[test]

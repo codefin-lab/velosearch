@@ -183,6 +183,7 @@ a worse console.
 | `VELOSEARCH_CONSOLE_BASE_PATH` | the path everything is served under, for a console behind a proxy that gives it one. Empty by default. |
 | `VELOSEARCH_ENGINE` | the engine behind it, which is where everything the console knows is kept. Default `http://127.0.0.1:9200`; credentials may be given in the URL. |
 | `VELOSEARCH_CONSOLE_ANONYMOUS_STATUS` | whether `/api/status` and the status page answer without a sign-in. Default `true`, which is what the reference's own suite starts it with. |
+| `VELOSEARCH_CONSOLE_BRANDING` | `opensearch` leaves the distribution's own name, marks and colours in place. Anything else, or unset, and the console is VeloSearch's: see [console.md](console.md). |
 | `VELOSEARCH_CONSOLE_XSRF` | whether a request that changes something must carry the `osd-xsrf` header. Default `true`; `false` is `server.xsrf.disableProtection` in the Node server, which its own API suite needs. |
 | `VELOSEARCH_CONSOLE_PROXY_FILTER` | the engine paths the Dev Tools proxy carries, as regular expressions separated by commas; `console.proxyFilter` in the Node server. Default `.*`. |
 | `VELOSEARCH_CONSOLE_COMPRESSION_REFERRERS` | the hosts a page may be embedded from and still get compressed answers, separated by commas; `server.compression.referrerWhitelist` in the Node server. Empty by default, which compresses for every referrer. |

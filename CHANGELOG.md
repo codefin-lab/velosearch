@@ -82,6 +82,13 @@ Dashboards' browser application. Recently added:
   metadata; the dangling-index, remote-store and stored-task-result endpoints,
   each answering as a node without the feature answers
 - `_nodes` and `_cluster/stats` narrowed to the nodes and metrics a path names
+- the console is VeloSearch's: its name, its wordmark, its mark and its
+  favicon come out of the branding block the front end already reads, and its
+  colours out of a stylesheet served with them. The marks are compiled into
+  the binary, so there is nothing a deployment can forget; the green that is
+  text is a darker one than the green that is the mark, because the mark's
+  reads at 2.3 against white. `VELOSEARCH_CONSOLE_BRANDING=opensearch` leaves
+  the distribution's own in place ([docs/console.md](docs/console.md))
 - circuit breakers that refuse rather than only report: an aggregating search
   is given a budget out of `indices.breaker.request.limit` and held to it, a
   body is counted against the in-flight breaker, and the parent breaker reads

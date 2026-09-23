@@ -13,6 +13,7 @@
 //! and `console/osd-<version>.json`.
 
 pub mod assets;
+pub mod brand;
 pub mod engine;
 pub mod fields;
 pub mod filter;
