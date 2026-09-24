@@ -47,6 +47,34 @@ serves VeloSearch's.
 | the mark | the collapsed navigation, the loading screen and the favicon |
 | the colours | `#00C566` is the mark's green; `#00753C` is what text, a link and a filled button are, because the mark's green reads at 2.3 against white and that one at 5.8; `#004628` is the header; `#E1F4E9` is a tint. A dark page swaps the first two, where the bright green is the one that can be read |
 
+### The theme, not a skin over it
+
+A distribution's theme is six prebuilt stylesheets, and every colour in the
+application comes out of them. So the console moves the theme rather than
+laying a sheet of overrides on top of it: every stylesheet it serves is read,
+each colour in it is looked at, and the ones that are the primary blue are
+replaced on the way out. The result is kept, so a theme is transformed once
+and not once per reader.
+
+Which colours those are was measured, not guessed. Across the six stylesheets
+every shade of the primary -- the blue, its hover, its focus ring, its tints
+and the lighter versions the dark themes use -- has a hue between 197 and 210
+and a saturation of 0.56 or more. Everything outside that window is left
+exactly as it was: the blue-greys that body text and panel borders are drawn
+in, the danger red, the warning yellow, and the categorical palette a chart
+gives its series, where recolouring would make two series the same colour.
+
+A replacement keeps the colour's relative luminance, which is the one quantity
+WCAG contrast is computed from. Hue and saturation move; how bright the colour
+is does not. Every contrast ratio the people who built the theme measured --
+label on a filled button, focus ring against the panel behind it, disabled
+text on its background -- comes out the same here. `#0268BC`, the primary,
+lands on `#01773E`, two units off the brand's own `#00753C`.
+
+What is left for the stylesheet is what a distribution paints outside the
+theme: the bar across the top, and the page drawn before the application has
+booted.
+
 The marks are compiled into the binary rather than read from a directory --
 a console is one binary pointed at a distribution, and an image a deployment
 could forget is a header with a hole in it. They are served under

@@ -84,11 +84,19 @@ Dashboards' browser application. Recently added:
 - `_nodes` and `_cluster/stats` narrowed to the nodes and metrics a path names
 - the console is VeloSearch's: its name, its wordmark, its mark and its
   favicon come out of the branding block the front end already reads, and its
-  colours out of a stylesheet served with them. The marks are compiled into
-  the binary, so there is nothing a deployment can forget; the green that is
-  text is a darker one than the green that is the mark, because the mark's
-  reads at 2.3 against white. `VELOSEARCH_CONSOLE_BRANDING=opensearch` leaves
-  the distribution's own in place ([docs/console.md](docs/console.md))
+  colours out of the theme itself. The marks are compiled into the binary, so
+  there is nothing a deployment can forget; the green that is text is a darker
+  one than the green that is the mark, because the mark's reads at 2.3 against
+  white. `VELOSEARCH_CONSOLE_BRANDING=opensearch` leaves the distribution's own
+  in place ([docs/console.md](docs/console.md))
+- the console's theme is moved rather than skinned: every stylesheet it serves
+  is read on the way out and the shades that are the primary blue -- a hue
+  between 197 and 210 at a saturation of 0.55 or more, which is where all of
+  them and none of the blue-greys, the danger red or the chart palette fall --
+  are replaced. Each replacement keeps the colour's relative luminance, so
+  every contrast ratio the theme was built with comes out unchanged; the
+  primary `#0268BC` lands two units from the brand's own `#00753C`. Each
+  stylesheet is transformed once and kept ([docs/console.md](docs/console.md))
 - circuit breakers that refuse rather than only report: an aggregating search
   is given a budget out of `indices.breaker.request.limit` and held to it, a
   body is counted against the in-flight breaker, and the parent breaker reads

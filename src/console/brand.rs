@@ -72,15 +72,16 @@ pub fn wanted() -> bool {
     )
 }
 
-/// The stylesheet that re-colours the application.
+/// The stylesheet that paints what the theme does not derive.
 ///
-/// Two layers, because a theme is not one thing. The first sets the
-/// variables the shipped theme defines its own colours in, which is where
-/// most of the application reads from. The second names the few surfaces
-/// that are painted rather than derived -- the header, a filled button, a
-/// selected tab, a link -- for a build whose variables are named differently.
-/// Everything is additive and this sheet is last, so the worst a mismatch can
-/// do is leave a surface the colour it already was.
+/// [`recoloured`] moves the theme itself, which is where the application gets
+/// almost all of its colour. What is left over is the handful of surfaces a
+/// distribution paints outside the theme -- the bar across the top, the page
+/// drawn before the application has booted -- and the few custom properties
+/// the built theme really does declare (`--euiColor*`; there are no `--oui*`
+/// ones in it, which is why none are set here). Everything is additive and
+/// this sheet is last, so the worst a mismatch can do is leave a surface the
+/// colour it already was.
 pub fn stylesheet() -> String {
     format!(
         ":root {{\
@@ -89,12 +90,6 @@ pub fn stylesheet() -> String {
            --velo-primary-dark: {PRIMARY_DARK};\
            --velo-deep: {DEEP};\
            --velo-tint: {TINT};\
-           --ouiColorPrimary: {PRIMARY};\
-           --ouiColorPrimaryText: {PRIMARY};\
-           --ouiColorAccent: {ACCENT};\
-           --ouiColorAccentText: {PRIMARY};\
-           --ouiColorLink: {PRIMARY};\
-           --ouiLinkColor: {PRIMARY};\
            --euiColorPrimary: {PRIMARY};\
            --euiColorPrimaryText: {PRIMARY};\
            --euiColorAccent: {ACCENT};\
@@ -105,10 +100,6 @@ pub fn stylesheet() -> String {
          /* a dark page reads the bright green well and the dark one not at \
             all, so the two swap there */\
          .theme-dark, [data-theme=\"dark\"], .ouiTheme--dark, .euiTheme--dark {{\
-           --ouiColorPrimary: {ACCENT};\
-           --ouiColorPrimaryText: {ACCENT};\
-           --ouiColorLink: {ACCENT};\
-           --ouiLinkColor: {ACCENT};\
            --euiColorPrimary: {ACCENT};\
            --euiColorPrimaryText: {ACCENT};\
            --euiLinkColor: {ACCENT};\
@@ -149,6 +140,199 @@ pub fn stylesheet() -> String {
          .osdProgress {{ background-color: {TINT}; }}\
          .osdProgress:before {{ background-color: {ACCENT}; }}\n"
     )
+}
+
+/// The hue the brand's greens are drawn at, in degrees. Every green in this
+/// file sits on it, and so does every colour [`recoloured`] makes.
+const BRAND_HUE: f64 = 151.0;
+
+/// The band of hues a theme's primary blue lives in, in degrees.
+///
+/// Measured, not guessed. Across the six stylesheets a distribution ships,
+/// every shade of the primary -- the blue itself, its hover, its focus ring,
+/// its tints and the two dark themes' lighter versions -- falls between 197
+/// and 210. A wider band starts catching colours that are not the primary at
+/// all: the blue-greys that body text and panel borders are drawn in, and the
+/// navy a shadow is made of.
+const PRIMARY_HUES: std::ops::RangeInclusive<f64> = 195.0..=212.0;
+
+/// How saturated a colour has to be before it counts as the primary rather
+/// than a grey with a cool cast. `#2A3947` -- the colour of body text on the
+/// dark themes -- is 0.26, and the palest real primary is 0.56.
+const PRIMARY_SATURATION: f64 = 0.55;
+
+/// How light, either side, before a colour is really black or really white.
+const PRIMARY_LIGHTNESS: std::ops::RangeInclusive<f64> = 0.12..=0.80;
+
+/// A theme's stylesheet with its blues moved onto the brand's green.
+///
+/// This is the theme, not a skin over it. Every colour the distribution's
+/// stylesheet names is looked at, the ones that are the primary blue are
+/// replaced, and the rest -- text, surfaces, borders, the danger red, the
+/// warning yellow and the categorical palette a chart draws its series in --
+/// are left exactly as they were.
+///
+/// A replacement keeps the colour's *relative luminance*, which is the one
+/// property WCAG contrast is computed from. Hue and saturation move; how
+/// bright the colour is does not. So every contrast ratio in the theme --
+/// the text on a filled button, the focus ring against the panel behind it,
+/// a disabled label against its background -- comes out the same as the
+/// people who built the theme measured it. What is a legible pairing in
+/// OpenSearch's blue is a legible pairing here.
+pub fn recoloured(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let bytes = css.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#'
+            && let Some((colour, width)) = hex_at(&bytes[i + 1..])
+            && let Some(moved) = moved(colour)
+        {
+            out.push_str(&format!("#{:02x}{:02x}{:02x}", moved.0, moved.1, moved.2));
+            i += 1 + width;
+            continue;
+        }
+        if (bytes[i] == b'r' || bytes[i] == b'R')
+            && let Some((colour, width)) = rgb_at(&bytes[i..])
+            && let Some(moved) = moved(colour)
+        {
+            out.push_str(&format!("rgb({}, {}, {}", moved.0, moved.1, moved.2));
+            i += width;
+            continue;
+        }
+        let step = css[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+        out.push_str(&css[i..i + step]);
+        i += step;
+    }
+    out
+}
+
+/// The colour a `#…` at the start of these bytes names, and how many bytes it
+/// took. Both spellings a stylesheet uses; anything else is not a colour.
+fn hex_at(rest: &[u8]) -> Option<((u8, u8, u8), usize)> {
+    let digits = rest.iter().take_while(|b| b.is_ascii_hexdigit()).count();
+    let read = |a: u8, b: u8| u8::from_str_radix(std::str::from_utf8(&[a, b]).ok()?, 16).ok();
+    match digits {
+        3 => Some(((read(rest[0], rest[0])?, read(rest[1], rest[1])?, read(rest[2], rest[2])?), 3)),
+        6 => Some(((read(rest[0], rest[1])?, read(rest[2], rest[3])?, read(rest[4], rest[5])?), 6)),
+        _ => None,
+    }
+}
+
+/// The colour an `rgb(` or `rgba(` at the start of these bytes opens with,
+/// and how many bytes reach the end of its third number. The alpha, and the
+/// closing bracket, are left where they are: how see-through a colour is is
+/// not part of which colour it is.
+fn rgb_at(rest: &[u8]) -> Option<((u8, u8, u8), usize)> {
+    let text = std::str::from_utf8(rest).ok()?;
+    let lower = text.get(..5)?.to_ascii_lowercase();
+    let mut at = if lower.starts_with("rgba(") {
+        5
+    } else if lower.starts_with("rgb(") {
+        4
+    } else {
+        return None;
+    };
+    let mut channels = [0u8; 3];
+    for (n, channel) in channels.iter_mut().enumerate() {
+        while text.as_bytes().get(at) == Some(&b' ') {
+            at += 1;
+        }
+        let start = at;
+        while text.as_bytes().get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        if at == start {
+            return None;
+        }
+        *channel = text[start..at].parse().ok()?;
+        if n < 2 {
+            while text.as_bytes().get(at) == Some(&b' ') {
+                at += 1;
+            }
+            if text.as_bytes().get(at) != Some(&b',') {
+                return None;
+            }
+            at += 1;
+        }
+    }
+    // a percentage or a fraction after the digits means this was not the
+    // integer form, and the bytes counted would not be the whole number
+    if matches!(text.as_bytes().get(at), Some(b'%') | Some(b'.')) {
+        return None;
+    }
+    Some(((channels[0], channels[1], channels[2]), at))
+}
+
+/// Where a colour goes, or [`None`] if it is not the primary blue and so
+/// stays where it is.
+fn moved(colour: (u8, u8, u8)) -> Option<(u8, u8, u8)> {
+    let (hue, saturation, lightness) = hsl(colour);
+    if !PRIMARY_HUES.contains(&hue)
+        || saturation < PRIMARY_SATURATION
+        || !PRIMARY_LIGHTNESS.contains(&lightness)
+    {
+        return None;
+    }
+    // the same saturation on the brand's hue, taken up or down until it is
+    // exactly as bright as what it replaces
+    let wanted = luminance(colour);
+    let (mut low, mut high) = (0.0f64, 1.0f64);
+    for _ in 0..24 {
+        let middle = (low + high) / 2.0;
+        if luminance(rgb(BRAND_HUE, saturation, middle)) < wanted {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    Some(rgb(BRAND_HUE, saturation, (low + high) / 2.0))
+}
+
+/// A colour's hue in degrees, saturation and lightness.
+fn hsl(colour: (u8, u8, u8)) -> (f64, f64, f64) {
+    let (r, g, b) = (colour.0 as f64 / 255.0, colour.1 as f64 / 255.0, colour.2 as f64 / 255.0);
+    let (high, low) = (r.max(g).max(b), r.min(g).min(b));
+    let lightness = (high + low) / 2.0;
+    let span = high - low;
+    if span <= f64::EPSILON {
+        return (0.0, 0.0, lightness);
+    }
+    let saturation = span / (1.0 - (2.0 * lightness - 1.0).abs());
+    let hue = if high == r {
+        60.0 * (((g - b) / span) % 6.0)
+    } else if high == g {
+        60.0 * ((b - r) / span + 2.0)
+    } else {
+        60.0 * ((r - g) / span + 4.0)
+    };
+    (if hue < 0.0 { hue + 360.0 } else { hue }, saturation, lightness)
+}
+
+/// The colour a hue, saturation and lightness name.
+fn rgb(hue: f64, saturation: f64, lightness: f64) -> (u8, u8, u8) {
+    let span = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let second = span * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let floor = lightness - span / 2.0;
+    let (r, g, b) = match (hue / 60.0) as u32 {
+        0 => (span, second, 0.0),
+        1 => (second, span, 0.0),
+        2 => (0.0, span, second),
+        3 => (0.0, second, span),
+        4 => (second, 0.0, span),
+        _ => (span, 0.0, second),
+    };
+    let byte = |v: f64| ((v + floor) * 255.0).round().clamp(0.0, 255.0) as u8;
+    (byte(r), byte(g), byte(b))
+}
+
+/// A colour's relative luminance, as WCAG defines it.
+fn luminance(colour: (u8, u8, u8)) -> f64 {
+    let channel = |v: u8| {
+        let v = v as f64 / 255.0;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * channel(colour.0) + 0.7152 * channel(colour.1) + 0.0722 * channel(colour.2)
 }
 
 /// The `branding` block the front end boots from: the distribution's own,
@@ -258,6 +442,110 @@ mod tests {
         assert_eq!(block["assetFolderUrl"], "/console/ui/velosearch");
         assert_eq!(block["logo"]["defaultUrl"], "/console/ui/velosearch/logo.png");
         assert!(head(&at).contains("/console/ui/velosearch/brand.css"));
+    }
+
+    /// The blue a distribution's own theme draws its primary in, and the two
+    /// shades either side of it that the six stylesheets actually contain.
+    const THEME_BLUES: &[&str] = &[
+        "#0268BC", "#006BB4", "#0097D1", "#1BA9F5", "#79AAD9", "#49BAF7", "#025AA3", "#014C8A",
+        "#093B56", "#013652", "#002A46",
+    ];
+
+    /// Colours the theme draws that are not the primary, and must survive
+    /// untouched: black, white, the body text and panel borders of both
+    /// themes, the danger red, the warning yellow, the success green, and
+    /// the categorical palette a chart gives its series.
+    const NOT_THE_PRIMARY: &[&str] = &[
+        "#000000", "#FFFFFF", "#FCFEFF", "#2A3947", "#DFE5EF", "#0A121A", "#BD271E", "#F5A700",
+        "#017D73", "#54B399", "#6092C0", "#D36086", "#9170B8", "#CA8EAE", "#D6BF57", "#B9A888",
+        "#DA8B45", "#AA6556", "#E7664C",
+    ];
+
+    #[test]
+    fn the_theme_s_blue_comes_out_the_brand_s_green() {
+        for blue in THEME_BLUES {
+            let after = recoloured(blue);
+            assert_ne!(&after, blue, "{blue} was left alone");
+            let (hue, _, _) = hsl(read(&after));
+            assert!(
+                (hue - BRAND_HUE).abs() < 2.0,
+                "{blue} -> {after} came out at {hue:.0} degrees, not the brand's"
+            );
+        }
+    }
+
+    #[test]
+    fn what_is_not_the_primary_is_left_exactly_as_it_was() {
+        for colour in NOT_THE_PRIMARY {
+            assert_eq!(&recoloured(colour), colour, "{colour} was moved and should not have been");
+        }
+    }
+
+    #[test]
+    fn the_primary_lands_where_the_brand_already_was() {
+        // the distribution's primary and the brand's green were arrived at
+        // separately, and the move puts the first within two units of the
+        // second -- which is the argument that this is the same theme in
+        // another colour rather than a different theme
+        assert_eq!(recoloured("#0268BC"), "#01773e");
+        assert!((luminance(read("#01773e")) - luminance(read(PRIMARY))).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_colour_comes_out_as_bright_as_it_went_in() {
+        // this is the whole promise: contrast is computed from relative
+        // luminance, so a theme whose luminances are unchanged is a theme
+        // whose every measured contrast ratio is unchanged
+        for blue in THEME_BLUES {
+            let before = luminance(read(blue));
+            let after = luminance(read(&recoloured(blue)));
+            let ratio = |l: f64| 1.05 / (l + 0.05);
+            assert!(
+                (ratio(before) - ratio(after)).abs() < 0.1,
+                "{blue}: contrast against white went {:.2} -> {:.2}",
+                ratio(before),
+                ratio(after)
+            );
+        }
+    }
+
+    #[test]
+    fn a_stylesheet_comes_out_a_stylesheet() {
+        let css = ".euiButton{background:#0268BC;color:#FFF;border:1px solid rgba(2, 104, 188, .3)}\
+                   .euiText{color:#2A3947}\
+                   @media (min-width:768px){.x{box-shadow:0 2px 4px rgba(0,0,0,0.15)}}";
+        let after = recoloured(css);
+        // the shape is untouched: same braces, same declarations, same length
+        // of everything that is not a colour
+        assert_eq!(css.matches('{').count(), after.matches('{').count());
+        assert_eq!(css.matches(';').count(), after.matches(';').count());
+        assert!(after.contains(".euiText{color:#2A3947}"), "{after}");
+        assert!(after.contains("rgba(0,0,0,0.15)"), "{after}");
+        assert!(after.contains("#FFF"), "{after}");
+        assert!(!after.to_lowercase().contains("#0268bc"), "{after}");
+        assert!(!after.contains("rgba(2, 104, 188"), "{after}");
+        assert!(after.contains(", .3)"), "how see-through it is is not a colour: {after}");
+    }
+
+    #[test]
+    fn nothing_that_is_not_a_colour_is_touched() {
+        for text in [
+            "#0268BCDD", // eight digits is a colour with an alpha, not six
+            "a#12",
+            "rgb(2, 104, 188%)",
+            "rgb(0.8%, 40%, 74%)",
+            "url(#filter0268BC)",
+            "--osd-id-0268BC",
+        ] {
+            assert_eq!(recoloured(text), text, "{text}");
+        }
+    }
+
+    /// A `#rrggbb` as three numbers.
+    fn read(hex: &str) -> (u8, u8, u8) {
+        let hex = hex.trim_start_matches('#');
+        let at = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+        (at(0), at(2), at(4))
     }
 
     #[test]

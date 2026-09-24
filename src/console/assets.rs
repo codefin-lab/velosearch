@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 
 use super::Console;
 
+/// The stylesheets already moved onto the brand's colours, by the file they
+/// were read from. A distribution's files do not change while it is being
+/// served, so what was made of one once is what it makes every time.
+static KEPT: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<u8>>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// A file to hand back, and what it is.
 pub struct Served {
     pub bytes: Vec<u8>,
@@ -38,11 +44,11 @@ impl Console {
             "plugin" => {
                 let (id, file) = file.split_once('/')?;
                 let dir = self.plugin_dirs.get(id)?.join("target/public");
-                return self.file(&dir, file, accepts);
+                return self.themed(&dir, file, accepts);
             }
             _ => return None,
         };
-        self.file(&base, file, accepts)
+        self.themed(&base, file, accepts)
     }
 
     /// The file a URL under `/plugins/{id}/assets/…` names: what a plugin
@@ -57,7 +63,35 @@ impl Console {
     /// the one directory of a distribution's `node_modules` the browser is
     /// sent to, for the theme's stylesheet.
     pub fn ui_framework(&self, rest: &str, accepts: &str) -> Option<Served> {
-        self.file(&self.home.join("node_modules/@osd/ui-framework/dist"), rest, accepts)
+        self.themed(&self.home.join("node_modules/@osd/ui-framework/dist"), rest, accepts)
+    }
+
+    /// One file, with a stylesheet's colours moved onto the brand's.
+    ///
+    /// A stylesheet is read uncompressed even where a compressed copy is
+    /// sitting beside it, because the point is to change what is in it, and
+    /// the result is kept: a theme is most of a megabyte and every reader
+    /// asks for the same one.
+    fn themed(&self, base: &Path, relative: &str, accepts: &str) -> Option<Served> {
+        if !relative.ends_with(".css") || !super::brand::wanted() {
+            return self.file(base, relative, accepts);
+        }
+        let mut path = PathBuf::from(base);
+        path.push(relative);
+        if let Some(kept) = KEPT.lock().ok().and_then(|kept| kept.get(&path).cloned()) {
+            return Some(Served { bytes: kept, kind: "text/css; charset=utf-8", encoding: None });
+        }
+        let served = self.file(base, relative, "")?;
+        let bytes = match std::str::from_utf8(&served.bytes) {
+            Ok(css) => super::brand::recoloured(css).into_bytes(),
+            // a stylesheet that is not text is a stylesheet this cannot read,
+            // and handing it over unchanged is better than not at all
+            Err(_) => served.bytes,
+        };
+        if let Ok(mut kept) = KEPT.lock() {
+            kept.insert(path, bytes.clone());
+        }
+        Some(Served { bytes, ..served })
     }
 
     /// The file a URL under `/ui/…` names: the favicons, the logos, the fonts
